@@ -6,28 +6,48 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/table"
+	"github.com/peterstace/simplefeatures/geom"
 )
 
 // stringifyValue converts a scanned driver value into a display string.
 // DuckDB may return composite types (lists, structs, maps) as Go slices/maps
 // that cannot be stored in sql.RawBytes, so we use interface{} containers
 // and format the values here.
-func stringifyValue(v interface{}) string {
+//
+// For binary columns whose name suggests they contain WKB (geo, geom, geometry,
+// wkb), we attempt to decode the bytes as Well Known Binary and render the
+// resulting geometry as WKT.
+func stringifyValue(v interface{}, colName string) string {
 	switch val := v.(type) {
 	case nil:
 		return "NULL"
 	case []byte:
+		if isWKBColumn(colName) {
+			if g, err := geom.UnmarshalWKB(val); err == nil {
+				return g.AsText()
+			}
+		}
 		return string(val)
 	case []interface{}:
 		parts := make([]string, len(val))
 		for i, p := range val {
-			parts[i] = stringifyValue(p)
+			parts[i] = stringifyValue(p, "")
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 	case fmt.Stringer:
 		return val.String()
 	default:
 		return fmt.Sprintf("%v", val)
+	}
+}
+
+// isWKBColumn reports whether a column name hints that its values are WKB.
+func isWKBColumn(name string) bool {
+	switch strings.ToLower(name) {
+	case "geo", "geom", "geometry", "wkb":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -121,7 +141,7 @@ func fetchTableData(db *sql.DB, query string) ([]table.Column, []table.Row, erro
 
 		row := make(table.Row, len(colNames))
 		for i := range colNames {
-			row[i] = stringifyValue(*vals[i].(*interface{}))
+			row[i] = stringifyValue(*vals[i].(*interface{}), colNames[i])
 		}
 		rows = append(rows, row)
 	}
