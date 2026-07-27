@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/table"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -35,10 +37,19 @@ func (m *mainModel) updateTableView(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case errorMsg:
 		m.errorMsg = string(msg)
+		m.loading = false
 		return m, nil
 	case fetchedDataMsg:
 		m.setupTableView(msg.cols, msg.rows)
+		m.loading = false
+	case spinner.TickMsg:
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 	case tea.KeyPressMsg:
+		if m.loading {
+			return m, nil
+		}
+
 		switch {
 		// New: Pressing Enter switches to Row Detail view
 		case key.Matches(msg, m.keys.Select):
@@ -73,7 +84,11 @@ func (m *mainModel) updateTableView(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *mainModel) tableView() string {
 	var b strings.Builder
 	b.WriteString("Query: " + m.query + "\n")
-	b.WriteString(m.viewport.View() + "\n")
+	if m.loading {
+		b.WriteString(fmt.Sprintf("\n  %s Loading query...\n", m.spinner.View()))
+	} else {
+		b.WriteString(m.viewport.View() + "\n")
+	}
 	b.WriteString(m.help.View(m))
 	return b.String()
 }

@@ -7,9 +7,11 @@ import (
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 type state int
@@ -52,6 +54,7 @@ type mainModel struct {
 	viewport       viewport.Model
 	detailViewport viewport.Model // Viewport for the row detail screen
 	help           help.Model
+	spinner        spinner.Model
 	keys           keyMap
 	width          int
 	height         int
@@ -60,6 +63,7 @@ type mainModel struct {
 	statusMsg      string // For "Copied to clipboard!" messages
 	selectedRowTxt string // Holds the raw text to be copied
 	isCustomQuery  bool
+	loading        bool   // True while fetching data/tables
 	initCmd        tea.Cmd
 }
 
@@ -102,8 +106,11 @@ func newModel(db *sql.DB) tea.Model {
 		viewport:       newEmptyViewport(),
 		detailViewport: newEmptyViewport(), // Initialize detail viewport
 		help:           help.New(),
+		spinner:        spinner.New(),
 		keys:           defaultKeys,
 	}
+	m.spinner.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
+	m.spinner.Spinner = spinner.Dot
 	m.initCmd = m.loadTables
 	return m
 }
@@ -117,10 +124,14 @@ func newModelWithQuery(db *sql.DB, query string) tea.Model {
 		viewport:       newEmptyViewport(),
 		detailViewport: newEmptyViewport(), // Initialize detail viewport
 		help:           help.New(),
+		spinner:        spinner.New(),
 		keys:           defaultKeys,
 		query:          query,
 		isCustomQuery:  true,
+		loading:        true,
 	}
+	m.spinner.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
+	m.spinner.Spinner = spinner.Dot
 	m.initCmd = m.fetchData
 	return m
 }
@@ -141,8 +152,17 @@ func (m *mainModel) fetchData() tea.Msg {
 	return fetchedDataMsg{cols: cols, rows: rows}
 }
 
+// loadingMsg toggles the loading spinner on/off.
+type loadingMsg bool
+
+func setLoading(loading bool) tea.Cmd {
+	return func() tea.Msg {
+		return loadingMsg(loading)
+	}
+}
+
 func (m *mainModel) Init() tea.Cmd {
-	return m.initCmd
+	return tea.Batch(m.initCmd, m.spinner.Tick)
 }
 
 func (m *mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -183,6 +203,15 @@ func (m *mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == detailView {
 			m.detailViewport.SetContent(baseStyle.Render(m.selectedRowTxt))
 		}
+
+	case loadingMsg:
+		m.loading = bool(msg)
+
+	case fetchedTablesMsg:
+		m.loading = false
+
+	case fetchedDataMsg:
+		m.loading = false
 
 	case tea.KeyPressMsg:
 		if key.Matches(msg, m.keys.Quit) {
