@@ -28,6 +28,8 @@ type keyMap struct {
 	Right  key.Binding
 	Left   key.Binding
 	Copy   key.Binding // New Copy key
+	Next   key.Binding
+	Prev   key.Binding
 }
 
 var defaultKeys = keyMap{
@@ -38,6 +40,8 @@ var defaultKeys = keyMap{
 	Right:  key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "scroll right")),
 	Left:   key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "scroll left")),
 	Copy:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy (OSC 52)")),
+	Next:   key.NewBinding(key.WithKeys("n", "j"), key.WithHelp("n", "next row")),
+	Prev:   key.NewBinding(key.WithKeys("p", "k"), key.WithHelp("p", "prev row")),
 }
 
 type mainModel struct {

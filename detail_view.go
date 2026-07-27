@@ -11,25 +11,27 @@ import (
 )
 
 func (m *mainModel) setupDetailView(cols []table.Column, row table.Row) {
-	var b strings.Builder
+	m.refreshDetailView()
+}
 
-	// Find the maximum column name length for clean colon alignment
+// refreshDetailView re-renders the detail viewport using the table's
+// currently selected row. Used by setupDetailView and the n/p navigation keys.
+func (m *mainModel) refreshDetailView() {
+	cols := m.table.Columns()
+	row := m.table.SelectedRow()
+
+	var b strings.Builder
 	maxColLen := 0
 	for _, c := range cols {
 		if len(c.Title) > maxColLen {
 			maxColLen = len(c.Title)
 		}
 	}
-
-	// Format row fields vertically
 	for i, c := range cols {
 		b.WriteString(fmt.Sprintf("%-*s : %s\n", maxColLen, c.Title, row[i]))
 	}
-
-	// Save raw text for the clipboard
 	m.selectedRowTxt = b.String()
 
-	// Update the detail viewport
 	m.detailViewport.SetContent(baseStyle.Render(m.selectedRowTxt))
 	m.detailViewport.GotoTop()
 	m.detailViewport.SetXOffset(0)
@@ -48,6 +50,14 @@ func (m *mainModel) updateDetailView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Set the status message and trigger the OSC 52 clipboard command
 			m.statusMsg = "Row copied to clipboard!"
 			return m, tea.SetClipboard(m.selectedRowTxt)
+		case key.Matches(msg, m.keys.Next):
+			m.table.MoveDown(1)
+			m.refreshDetailView()
+			return m, nil
+		case key.Matches(msg, m.keys.Prev):
+			m.table.MoveUp(1)
+			m.refreshDetailView()
+			return m, nil
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 		}
@@ -79,6 +89,8 @@ type detailHelp struct {
 
 func (d detailHelp) ShortHelp() []key.Binding {
 	return []key.Binding{
+		d.m.keys.Next,
+		d.m.keys.Prev,
 		d.m.keys.Copy,
 		d.m.keys.Back,
 		d.m.keys.Help,
@@ -88,6 +100,7 @@ func (d detailHelp) ShortHelp() []key.Binding {
 
 func (d detailHelp) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
+		{d.m.keys.Next, d.m.keys.Prev},
 		{d.m.keys.Copy, d.m.keys.Back},
 		{d.m.keys.Help, d.m.keys.Quit},
 	}
