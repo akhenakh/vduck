@@ -42,8 +42,8 @@ func main() {
 	}
 
 	// If the "database" path is actually a single-file data source (Parquet,
-	// CSV, JSON, etc.), open an in-memory DuckDB and create a view over it so
-	// it shows up in the table list and can be browsed like any other table.
+	// CSV, JSON, GeoJSON, etc.), open an in-memory DuckDB and create a view over
+	// it so it shows up in the table list and can be browsed like any other table.
 	openPath := *dbPath
 	isDataFile := false
 	if fileInit := fileDataSourceInit(*dbPath); fileInit != "" {
@@ -75,7 +75,7 @@ func main() {
 		if err != nil {
 			fmt.Printf("Error executing initialization SQL:\n%s\n", err)
 			if isDataFile {
-				fmt.Println("\nHint: the -db path was treated as a data file (Parquet/CSV/JSON/Vortex). If the file is corrupt or not in that format, use -query to run a custom read command or fix the file.")
+				fmt.Println("\nHint: the -db path was treated as a data file (Parquet/CSV/JSON/GeoJSON/Vortex). If the file is corrupt or not in that format, use -query to run a custom read command or fix the file.")
 			}
 			os.Exit(1)
 		}
@@ -103,8 +103,8 @@ func main() {
 }
 
 // fileDataSourceInit returns initialization SQL for single-file DuckDB-readable
-// formats (Parquet, CSV, JSON). The returned view name is derived from the
-// file's base name. An empty string means the path is not a recognised file
+// formats (Parquet, CSV, JSON, GeoJSON). The returned view name is derived from
+// the file's base name. An empty string means the path is not a recognised file
 // source and should be opened as a normal DuckDB database.
 func fileDataSourceInit(path string) string {
 	ext := strings.ToLower(filepath.Ext(path))
@@ -125,6 +125,8 @@ func fileDataSourceInit(path string) string {
 		return fmt.Sprintf("CREATE OR REPLACE VIEW \"%s\" AS SELECT * FROM read_csv_auto('%s');", name, safePath)
 	case ".json":
 		return fmt.Sprintf("CREATE OR REPLACE VIEW \"%s\" AS SELECT * FROM read_json_auto('%s');", name, safePath)
+	case ".geojson":
+		return fmt.Sprintf("INSTALL spatial; LOAD spatial; CREATE OR REPLACE VIEW \"%s\" AS SELECT * FROM ST_Read('%s');", name, safePath)
 	case ".vortex":
 		return fmt.Sprintf("INSTALL vortex; LOAD vortex; CREATE OR REPLACE VIEW \"%s\" AS SELECT * FROM read_vortex('%s');", name, safePath)
 	default:
