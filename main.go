@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	_ "github.com/duckdb/duckdb-go/v2"
@@ -39,7 +41,26 @@ func main() {
 		}
 	}
 
-	db, err := sql.Open("duckdb", *dbPath)
+	// If the "database" path is actually a single-file data source (Parquet,
+	// CSV, JSON, etc.), open an in-memory DuckDB and create a view over it so
+	// it shows up in the table list and can be browsed like any other table.
+	openPath := *dbPath
+	isDataFile := false
+	if fileInit := fileDataSourceInit(*dbPath); fileInit != "" {
+		if _, err := os.Stat(*dbPath); err != nil {
+			fmt.Printf("Error: cannot open data file %q: %s\n", *dbPath, err)
+			os.Exit(1)
+		}
+		isDataFile = true
+		openPath = ":memory:"
+		if *initSQL != "" {
+			*initSQL = fileInit + "\n" + *initSQL
+		} else {
+			*initSQL = fileInit
+		}
+	}
+
+	db, err := sql.Open("duckdb", openPath)
 	if err != nil {
 		fmt.Println("Error opening database:", err)
 		os.Exit(1)
@@ -53,6 +74,9 @@ func main() {
 		_, err = db.Exec(*initSQL)
 		if err != nil {
 			fmt.Printf("Error executing initialization SQL:\n%s\n", err)
+			if isDataFile {
+				fmt.Println("\nHint: the -db path was treated as a data file (Parquet/CSV/JSON/Vortex). If the file is corrupt or not in that format, use -query to run a custom read command or fix the file.")
+			}
 			os.Exit(1)
 		}
 	}
@@ -75,5 +99,35 @@ func main() {
 	if _, err := p.Run(); err != nil {
 		fmt.Println("Error running program:", err)
 		os.Exit(1)
+	}
+}
+
+// fileDataSourceInit returns initialization SQL for single-file DuckDB-readable
+// formats (Parquet, CSV, JSON). The returned view name is derived from the
+// file's base name. An empty string means the path is not a recognised file
+// source and should be opened as a normal DuckDB database.
+func fileDataSourceInit(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	name := strings.TrimSuffix(filepath.Base(path), ext)
+	// Sanitise the view name a bit.
+	name = strings.ReplaceAll(name, "\"", "")
+	if name == "" {
+		name = "data"
+	}
+
+	// Escape single quotes in the path for safe SQL string literals.
+	safePath := strings.ReplaceAll(path, "'", "''")
+
+	switch ext {
+	case ".parquet":
+		return fmt.Sprintf("CREATE OR REPLACE VIEW \"%s\" AS SELECT * FROM read_parquet('%s');", name, safePath)
+	case ".csv":
+		return fmt.Sprintf("CREATE OR REPLACE VIEW \"%s\" AS SELECT * FROM read_csv_auto('%s');", name, safePath)
+	case ".json":
+		return fmt.Sprintf("CREATE OR REPLACE VIEW \"%s\" AS SELECT * FROM read_json_auto('%s');", name, safePath)
+	case ".vortex":
+		return fmt.Sprintf("INSTALL vortex; LOAD vortex; CREATE OR REPLACE VIEW \"%s\" AS SELECT * FROM read_vortex('%s');", name, safePath)
+	default:
+		return ""
 	}
 }

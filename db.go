@@ -32,29 +32,42 @@ func stringifyValue(v interface{}) string {
 }
 
 // fetchTablesAndViews retrieves a list of all tables and views across all catalogs.
+// It uses information_schema.tables as the primary source, falling back to
+// duckdb_tables()/duckdb_views(), and adds a placeholder for attached catalogs
+// (e.g. Quack remote) that don't expose their metadata to client introspection.
 func fetchTablesAndViews(db *sql.DB) ([]string, error) {
 	query := `
-		SELECT database_name, schema_name, table_name 
-		FROM duckdb_tables() 
-		WHERE database_name NOT IN ('system', 'temp')
-		
-		UNION ALL 
-		
-		SELECT database_name, schema_name, view_name AS table_name 
-		FROM duckdb_views() 
-		WHERE database_name NOT IN ('system', 'temp')
-		
+		WITH all_objects AS (
+			SELECT table_catalog AS database_name,
+			       table_schema  AS schema_name,
+			       table_name    AS table_name
+			FROM information_schema.tables
+			WHERE table_catalog NOT IN ('system', 'temp')
+			  AND table_schema NOT IN ('information_schema', 'pg_catalog')
+
+			UNION ALL
+
+			SELECT database_name, schema_name, table_name
+			FROM duckdb_tables()
+			WHERE database_name NOT IN ('system', 'temp')
+
+			UNION ALL
+
+			SELECT database_name, schema_name, view_name AS table_name
+			FROM duckdb_views()
+			WHERE database_name NOT IN ('system', 'temp')
+		),
+		hidden AS (
+			SELECT database_name,
+			       '<unknown>' AS schema_name,
+			       '<Hidden Remote Tables>' AS table_name
+			FROM duckdb_databases()
+			WHERE database_name NOT IN ('system', 'temp')
+			  AND database_name NOT IN (SELECT DISTINCT database_name FROM all_objects)
+		)
+		SELECT DISTINCT database_name, schema_name, table_name FROM all_objects
 		UNION ALL
-		
-		-- Workaround for DuckDB Quack bug #175: 
-		-- Remote catalogs don't expose their tables to client introspection yet.
-		-- We show a placeholder so the user knows the database is attached.
-		SELECT database_name, '<unknown>' AS schema_name, '<Hidden Remote Tables>' AS table_name
-		FROM duckdb_databases()
-		WHERE database_name NOT IN ('system', 'temp')
-		  AND database_name NOT IN (SELECT database_name FROM duckdb_tables())
-		  AND database_name NOT IN (SELECT database_name FROM duckdb_views())
-		
+		SELECT database_name, schema_name, table_name FROM hidden
 		ORDER BY database_name, schema_name, table_name;
 	`
 	rows, err := db.Query(query)
