@@ -3,9 +3,33 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"charm.land/bubbles/v2/table"
 )
+
+// stringifyValue converts a scanned driver value into a display string.
+// DuckDB may return composite types (lists, structs, maps) as Go slices/maps
+// that cannot be stored in sql.RawBytes, so we use interface{} containers
+// and format the values here.
+func stringifyValue(v interface{}) string {
+	switch val := v.(type) {
+	case nil:
+		return "NULL"
+	case []byte:
+		return string(val)
+	case []interface{}:
+		parts := make([]string, len(val))
+		for i, p := range val {
+			parts[i] = stringifyValue(p)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case fmt.Stringer:
+		return val.String()
+	default:
+		return fmt.Sprintf("%v", val)
+	}
+}
 
 // fetchTablesAndViews retrieves a list of all tables and views across all catalogs.
 func fetchTablesAndViews(db *sql.DB) ([]string, error) {
@@ -72,7 +96,7 @@ func fetchTableData(db *sql.DB, query string) ([]table.Column, []table.Row, erro
 
 	vals := make([]interface{}, len(colNames))
 	for i := range colNames {
-		vals[i] = new(sql.RawBytes)
+		vals[i] = new(interface{})
 	}
 
 	var rows []table.Row
@@ -84,11 +108,7 @@ func fetchTableData(db *sql.DB, query string) ([]table.Column, []table.Row, erro
 
 		row := make(table.Row, len(colNames))
 		for i := range colNames {
-			if b, ok := vals[i].(*sql.RawBytes); ok {
-				row[i] = string(*b)
-			} else {
-				row[i] = "NULL"
-			}
+			row[i] = stringifyValue(*vals[i].(*interface{}))
 		}
 		rows = append(rows, row)
 	}

@@ -8,7 +8,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/table"
-	"charm.land/bubbles/v2/viewport" // Add viewport import
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -17,6 +17,7 @@ type state int
 const (
 	listView state = iota
 	tableView
+	detailView // New state for row details
 )
 
 type keyMap struct {
@@ -24,8 +25,9 @@ type keyMap struct {
 	Select key.Binding
 	Back   key.Binding
 	Help   key.Binding
-	Right  key.Binding // Added Right
-	Left   key.Binding // Added Left
+	Right  key.Binding
+	Left   key.Binding
+	Copy   key.Binding // New Copy key
 }
 
 var defaultKeys = keyMap{
@@ -35,22 +37,26 @@ var defaultKeys = keyMap{
 	Help:   key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	Right:  key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "scroll right")),
 	Left:   key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "scroll left")),
+	Copy:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy (OSC 52)")),
 }
 
 type mainModel struct {
-	state         state
-	db            *sql.DB
-	list          list.Model
-	table         table.Model
-	viewport      viewport.Model // Add viewport model
-	help          help.Model
-	keys          keyMap
-	width         int
-	height        int
-	query         string
-	errorMsg      string
-	isCustomQuery bool
-	initCmd       tea.Cmd
+	state          state
+	db             *sql.DB
+	list           list.Model
+	table          table.Model
+	viewport       viewport.Model
+	detailViewport viewport.Model // Viewport for the row detail screen
+	help           help.Model
+	keys           keyMap
+	width          int
+	height         int
+	query          string
+	errorMsg       string
+	statusMsg      string // For "Copied to clipboard!" messages
+	selectedRowTxt string // Holds the raw text to be copied
+	isCustomQuery  bool
+	initCmd        tea.Cmd
 }
 
 type (
@@ -79,19 +85,20 @@ func newEmptyList() list.Model {
 
 func newEmptyViewport() viewport.Model {
 	vp := viewport.New(viewport.WithWidth(0), viewport.WithHeight(0))
-	vp.SoftWrap = false // CRITICAL: Disable wrapping so we can scroll horizontally
+	vp.SoftWrap = false
 	return vp
 }
 
 func newModel(db *sql.DB) tea.Model {
 	m := &mainModel{
-		state:    listView,
-		db:       db,
-		list:     newEmptyList(),
-		table:    newEmptyTable(),
-		viewport: newEmptyViewport(),
-		help:     help.New(),
-		keys:     defaultKeys,
+		state:          listView,
+		db:             db,
+		list:           newEmptyList(),
+		table:          newEmptyTable(),
+		viewport:       newEmptyViewport(),
+		detailViewport: newEmptyViewport(), // Initialize detail viewport
+		help:           help.New(),
+		keys:           defaultKeys,
 	}
 	m.initCmd = m.loadTables
 	return m
@@ -99,15 +106,16 @@ func newModel(db *sql.DB) tea.Model {
 
 func newModelWithQuery(db *sql.DB, query string) tea.Model {
 	m := &mainModel{
-		state:         tableView,
-		db:            db,
-		list:          newEmptyList(),
-		table:         newEmptyTable(),
-		viewport:      newEmptyViewport(),
-		help:          help.New(),
-		keys:          defaultKeys,
-		query:         query,
-		isCustomQuery: true,
+		state:          tableView,
+		db:             db,
+		list:           newEmptyList(),
+		table:          newEmptyTable(),
+		viewport:       newEmptyViewport(),
+		detailViewport: newEmptyViewport(), // Initialize detail viewport
+		help:           help.New(),
+		keys:           defaultKeys,
+		query:          query,
+		isCustomQuery:  true,
 	}
 	m.initCmd = m.fetchData
 	return m
@@ -135,6 +143,12 @@ func (m *mainModel) Init() tea.Cmd {
 
 func (m *mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
+
+	// Clear the status message on any keystroke so it doesn't linger forever
+	if _, ok := msg.(tea.KeyPressMsg); ok {
+		m.statusMsg = ""
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -142,33 +156,34 @@ func (m *mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.help.SetWidth(msg.Width)
 		m.list.SetSize(msg.Width, msg.Height-1)
 
-		// Configure viewport width & height
-		m.viewport.SetWidth(msg.Width)
 		vpHeight := msg.Height - 5
 		if vpHeight < 1 {
 			vpHeight = 1
 		}
+
+		m.viewport.SetWidth(msg.Width)
 		m.viewport.SetHeight(vpHeight)
 
-		// Make the table slightly shorter to make room for the border
+		m.detailViewport.SetWidth(msg.Width)
+		m.detailViewport.SetHeight(vpHeight)
+
 		tableHeight := msg.Height - 7
 		if tableHeight < 1 {
 			tableHeight = 1
 		}
 		m.table.SetHeight(tableHeight)
 
-		// Re-render viewport if table changes size
 		if m.state == tableView {
-			// Using a small hack to ensure baseStyle is available.
-			// It will be re-rendered cleanly in updateTableView anyway.
 			m.viewport.SetContent(baseStyle.Render(m.table.View()))
+		}
+		if m.state == detailView {
+			m.detailViewport.SetContent(baseStyle.Render(m.selectedRowTxt))
 		}
 
 	case tea.KeyPressMsg:
 		if key.Matches(msg, m.keys.Quit) {
 			return m, tea.Quit
 		}
-
 		if m.errorMsg != "" {
 			if key.Matches(msg, m.keys.Back) {
 				m.errorMsg = ""
@@ -187,6 +202,8 @@ func (m *mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateListView(msg)
 	case tableView:
 		return m.updateTableView(msg)
+	case detailView:
+		return m.updateDetailView(msg) // Route to new view
 	}
 
 	return m, cmd
@@ -203,6 +220,8 @@ func (m *mainModel) View() tea.View {
 			content = m.listView()
 		case tableView:
 			content = m.tableView()
+		case detailView:
+			content = m.detailView()
 		}
 	}
 

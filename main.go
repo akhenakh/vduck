@@ -11,11 +11,33 @@ import (
 )
 
 func main() {
-	dbPath := flag.String("db", ":memory:", "Path to the DuckDB database file")
-	initSQL := flag.String("init", "", "Initialization SQL to run on startup")
-	queryStr := flag.String("query", "", "Directly execute a query and show the results")
+	// Use a custom FlagSet so we can safely use "-h" for hostname instead of help
+	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	dbPath := fs.String("db", ":memory:", "Path to the DuckDB database file")
+	initSQL := fs.String("init", "", "Initialization SQL to run on startup")
+	queryStr := fs.String("query", "", "Directly execute a query and show the results")
 
-	flag.Parse()
+	// New Quack flags
+	host := fs.String("h", "", "Quack hostname (e.g., data-stage.tech.dronespotterlabs.com:443)")
+	token := fs.String("t", "", "Quack token (can also be provided via QUACK_TOKEN env var)")
+
+	fs.Parse(os.Args[1:])
+
+	// Resolve Quack Token
+	tok := *token
+	if tok == "" {
+		tok = os.Getenv("QUACK_TOKEN")
+	}
+
+	// Auto-generate the Quack loading SQL if a host is provided
+	if *host != "" {
+		quackInit := fmt.Sprintf("INSTALL quack; LOAD quack; ATTACH 'quack:%s' AS remote (TOKEN '%s', DISABLE_SSL false);", *host, tok)
+		if *initSQL != "" {
+			*initSQL = quackInit + "\n" + *initSQL
+		} else {
+			*initSQL = quackInit
+		}
+	}
 
 	db, err := sql.Open("duckdb", *dbPath)
 	if err != nil {
@@ -24,12 +46,9 @@ func main() {
 	}
 	defer db.Close()
 
-	// CRITICAL FIX: Limit the pool to exactly 1 connection.
-	// This ensures that stateful commands like 'LOAD quack' and 'ATTACH'
-	// persist for all subsequent queries in the app.
+	// Limit pool to 1 connection to maintain ATTACH/LOAD state
 	db.SetMaxOpenConns(1)
 
-	// Execute any pre-string / initialization SQL
 	if *initSQL != "" {
 		_, err = db.Exec(*initSQL)
 		if err != nil {
@@ -39,8 +58,8 @@ func main() {
 	}
 
 	finalQuery := *queryStr
-	if finalQuery == "" && flag.NArg() > 0 {
-		finalQuery = flag.Arg(0)
+	if finalQuery == "" && fs.NArg() > 0 {
+		finalQuery = fs.Arg(0)
 	}
 
 	var initialModel tea.Model
