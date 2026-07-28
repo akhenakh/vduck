@@ -50,6 +50,14 @@ func (m *mainModel) updateDetailView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Set the status message and trigger the OSC 52 clipboard command
 			m.statusMsg = "Row copied to clipboard!"
 			return m, tea.SetClipboard(m.selectedRowTxt)
+		case key.Matches(msg, m.keys.Schema):
+			schema, err := fetchTableSchema(m.db, m.query)
+			if err != nil {
+				m.statusMsg = fmt.Sprintf("Describe failed: %s", err)
+				return m, nil
+			}
+			m.statusMsg = "Schema copied to clipboard!"
+			return m, tea.SetClipboard(schema)
 		case key.Matches(msg, m.keys.Next):
 			m.table.MoveDown(1)
 			m.refreshDetailView()
@@ -92,6 +100,7 @@ func (d detailHelp) ShortHelp() []key.Binding {
 		d.m.keys.Next,
 		d.m.keys.Prev,
 		d.m.keys.Copy,
+		d.m.keys.Schema,
 		d.m.keys.Back,
 		d.m.keys.Help,
 		d.m.keys.Quit,
@@ -101,7 +110,7 @@ func (d detailHelp) ShortHelp() []key.Binding {
 func (d detailHelp) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{d.m.keys.Next, d.m.keys.Prev},
-		{d.m.keys.Copy, d.m.keys.Back},
+		{d.m.keys.Copy, d.m.keys.Schema, d.m.keys.Back},
 		{d.m.keys.Help, d.m.keys.Quit},
 	}
 }

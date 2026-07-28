@@ -109,6 +109,82 @@ func fetchTablesAndViews(db *sql.DB) ([]string, error) {
 	return names, nil
 }
 
+// fetchTableSchema runs DESCRIBE on the given table/view and returns a formatted
+// string representation of its schema, suitable for copying to the clipboard.
+func fetchTableSchema(db *sql.DB, source string) (string, error) {
+	source = strings.TrimSuffix(strings.TrimSpace(source), ";")
+	query := "DESCRIBE " + source + ";"
+	rows, err := db.Query(query)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	colNames, err := rows.Columns()
+	if err != nil {
+		return "", err
+	}
+
+	vals := make([]interface{}, len(colNames))
+	for i := range colNames {
+		vals[i] = new(interface{})
+	}
+
+	var records []table.Row
+	for rows.Next() {
+		if err := rows.Scan(vals...); err != nil {
+			return "", err
+		}
+		row := make(table.Row, len(colNames))
+		for i := range colNames {
+			row[i] = stringifyValue(*vals[i].(*interface{}), colNames[i])
+		}
+		records = append(records, row)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+
+	// Build a simple aligned text representation.
+	widths := make([]int, len(colNames))
+	for i, name := range colNames {
+		widths[i] = len(name)
+	}
+	for _, row := range records {
+		for i, cell := range row {
+			if len(cell) > widths[i] {
+				widths[i] = len(cell)
+			}
+		}
+	}
+
+	var b strings.Builder
+	for i, name := range colNames {
+		if i > 0 {
+			b.WriteString("  ")
+		}
+		b.WriteString(fmt.Sprintf("%-*s", widths[i], name))
+	}
+	b.WriteString("\n")
+	for i, width := range widths {
+		if i > 0 {
+			b.WriteString("  ")
+		}
+		b.WriteString(strings.Repeat("-", width))
+	}
+	b.WriteString("\n")
+	for _, row := range records {
+		for i, cell := range row {
+			if i > 0 {
+				b.WriteString("  ")
+			}
+			b.WriteString(fmt.Sprintf("%-*s", widths[i], cell))
+		}
+		b.WriteString("\n")
+	}
+	return b.String(), nil
+}
+
 // fetchTableData executes a query and returns the columns and rows for our table model.
 func fetchTableData(db *sql.DB, query string) ([]table.Column, []table.Row, error) {
 	sqlRows, err := db.Query(query)

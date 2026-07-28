@@ -25,6 +25,7 @@ const (
 type keyMap struct {
 	Quit   key.Binding
 	Select key.Binding
+	Schema key.Binding // Describe current table and copy schema to clipboard
 	Back   key.Binding
 	Help   key.Binding
 	Right  key.Binding
@@ -37,6 +38,7 @@ type keyMap struct {
 var defaultKeys = keyMap{
 	Quit:   key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 	Select: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
+	Schema: key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "copy schema")),
 	Back:   key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
 	Help:   key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	Right:  key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "scroll right")),
@@ -63,7 +65,7 @@ type mainModel struct {
 	statusMsg      string // For "Copied to clipboard!" messages
 	selectedRowTxt string // Holds the raw text to be copied
 	isCustomQuery  bool
-	loading        bool   // True while fetching data/tables
+	loading        bool // True while fetching data/tables
 	initCmd        tea.Cmd
 }
 

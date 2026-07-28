@@ -52,6 +52,24 @@ func (m *mainModel) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loading = true
 				return m, tea.Batch(setLoading(true), m.fetchData)
 			}
+
+		case key.Matches(msg, m.keys.Schema):
+			if i, ok := m.list.SelectedItem().(listItem); ok {
+				selected := string(i)
+
+				if strings.Contains(selected, "<Hidden Remote Tables>") {
+					return m, m.list.NewStatusMessage("Cannot describe hidden tables directly. Use --query flag.")
+				}
+
+				schema, err := fetchTableSchema(m.db, selected)
+				if err != nil {
+					return m, m.list.NewStatusMessage(fmt.Sprintf("Describe failed: %s", err))
+				}
+				return m, tea.Batch(
+					m.list.NewStatusMessage("Schema copied to clipboard!"),
+					tea.SetClipboard(schema),
+				)
+			}
 		}
 	}
 
@@ -80,4 +98,4 @@ type listItem string
 
 func (i listItem) FilterValue() string { return string(i) }
 func (i listItem) Title() string       { return string(i) }
-func (i listItem) Description() string { return "Press Enter to view data" }
+func (i listItem) Description() string { return "enter to view data, s to copy schema" }

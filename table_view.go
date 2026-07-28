@@ -72,6 +72,14 @@ func (m *mainModel) updateTableView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Left):
 			m.viewport.ScrollLeft(5)
 			return m, nil
+		case key.Matches(msg, m.keys.Schema):
+			schema, err := fetchTableSchema(m.db, m.query)
+			if err != nil {
+				m.statusMsg = fmt.Sprintf("Describe failed: %s", err)
+				return m, nil
+			}
+			m.statusMsg = "Schema copied to clipboard!"
+			return m, tea.SetClipboard(schema)
 		}
 	}
 
@@ -89,17 +97,20 @@ func (m *mainModel) tableView() string {
 	} else {
 		b.WriteString(m.viewport.View() + "\n")
 	}
+	if m.statusMsg != "" {
+		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Render(m.statusMsg) + "  ")
+	}
 	b.WriteString(m.help.View(m))
 	return b.String()
 }
 
 func (m mainModel) ShortHelp() []key.Binding {
-	return []key.Binding{m.keys.Select, m.keys.Left, m.keys.Right, m.keys.Back, m.keys.Help, m.keys.Quit}
+	return []key.Binding{m.keys.Select, m.keys.Left, m.keys.Right, m.keys.Schema, m.keys.Back, m.keys.Help, m.keys.Quit}
 }
 
 func (m mainModel) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{m.table.KeyMap.LineUp, m.table.KeyMap.LineDown, m.keys.Left, m.keys.Right},
-		{m.keys.Select, m.keys.Back, m.keys.Quit, m.keys.Help},
+		{m.keys.Select, m.keys.Schema, m.keys.Back, m.keys.Quit, m.keys.Help},
 	}
 }
