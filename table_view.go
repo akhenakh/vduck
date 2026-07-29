@@ -58,12 +58,14 @@ func (m *mainModel) updateTableView(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = detailView
 				return m, nil
 			}
-		case key.Matches(msg, m.keys.Back):
+		case key.Matches(msg, key.NewBinding(key.WithKeys("esc"))):
 			if !m.isCustomQuery {
 				m.state = listView
 				m.query = ""
 				return m, m.loadTables
 			}
+			// When started with --query there's nowhere to go back to, so esc quits.
+			return m, tea.Quit
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
 		case key.Matches(msg, m.keys.Right):
@@ -80,6 +82,9 @@ func (m *mainModel) updateTableView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.statusMsg = "Schema copied to clipboard!"
 			return m, tea.SetClipboard(schema)
+		case key.Matches(msg, m.keys.EditQuery):
+			m.state = queryEditView
+			return m, m.setupQueryEditView()
 		}
 	}
 
@@ -105,12 +110,26 @@ func (m *mainModel) tableView() string {
 }
 
 func (m mainModel) ShortHelp() []key.Binding {
-	return []key.Binding{m.keys.Select, m.keys.Left, m.keys.Right, m.keys.Schema, m.keys.Back, m.keys.Help, m.keys.Quit}
+	// In table view, 'q' edits the query, so show ctrl+c as quit instead.
+	quitHelp := key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit"))
+	// esc goes back to the list view, or quits when started with --query.
+	backDesc := "back"
+	if m.isCustomQuery {
+		backDesc = "quit"
+	}
+	escHelp := key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", backDesc))
+	return []key.Binding{m.keys.Select, m.keys.Left, m.keys.Right, m.keys.Schema, m.keys.EditQuery, escHelp, m.keys.Help, quitHelp}
 }
 
 func (m mainModel) FullHelp() [][]key.Binding {
+	quitHelp := key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit"))
+	backDesc := "back"
+	if m.isCustomQuery {
+		backDesc = "quit"
+	}
+	escHelp := key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", backDesc))
 	return [][]key.Binding{
 		{m.table.KeyMap.LineUp, m.table.KeyMap.LineDown, m.keys.Left, m.keys.Right},
-		{m.keys.Select, m.keys.Schema, m.keys.Back, m.keys.Quit, m.keys.Help},
+		{m.keys.Select, m.keys.Schema, m.keys.EditQuery, escHelp, quitHelp, m.keys.Help},
 	}
 }

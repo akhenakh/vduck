@@ -9,6 +9,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/table"
+	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -19,33 +20,36 @@ type state int
 const (
 	listView state = iota
 	tableView
-	detailView // New state for row details
+	detailView    // Row details
+	queryEditView // Edit the current query
 )
 
 type keyMap struct {
-	Quit   key.Binding
-	Select key.Binding
-	Schema key.Binding // Describe current table and copy schema to clipboard
-	Back   key.Binding
-	Help   key.Binding
-	Right  key.Binding
-	Left   key.Binding
-	Copy   key.Binding // New Copy key
-	Next   key.Binding
-	Prev   key.Binding
+	Quit      key.Binding
+	Select    key.Binding
+	Schema    key.Binding // Describe current table and copy schema to clipboard
+	EditQuery key.Binding // Edit the current query
+	Back      key.Binding
+	Help      key.Binding
+	Right     key.Binding
+	Left      key.Binding
+	Copy      key.Binding // New Copy key
+	Next      key.Binding
+	Prev      key.Binding
 }
 
 var defaultKeys = keyMap{
-	Quit:   key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
-	Select: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
-	Schema: key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "copy schema")),
-	Back:   key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
-	Help:   key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-	Right:  key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "scroll right")),
-	Left:   key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "scroll left")),
-	Copy:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy (OSC 52)")),
-	Next:   key.NewBinding(key.WithKeys("n", "j"), key.WithHelp("n", "next row")),
-	Prev:   key.NewBinding(key.WithKeys("p", "k"), key.WithHelp("p", "prev row")),
+	Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+	Select:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
+	Schema:    key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "copy schema")),
+	EditQuery: key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "edit query")),
+	Back:      key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
+	Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+	Right:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "scroll right")),
+	Left:      key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "scroll left")),
+	Copy:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy (OSC 52)")),
+	Next:      key.NewBinding(key.WithKeys("n", "j"), key.WithHelp("n", "next row")),
+	Prev:      key.NewBinding(key.WithKeys("p", "k"), key.WithHelp("p", "prev row")),
 }
 
 type mainModel struct {
@@ -55,6 +59,7 @@ type mainModel struct {
 	table          table.Model
 	viewport       viewport.Model
 	detailViewport viewport.Model // Viewport for the row detail screen
+	textInput      textinput.Model
 	help           help.Model
 	spinner        spinner.Model
 	keys           keyMap
@@ -99,6 +104,15 @@ func newEmptyViewport() viewport.Model {
 	return vp
 }
 
+func newQueryInput() textinput.Model {
+	ti := textinput.New()
+	ti.Prompt = "Query: "
+	ti.Placeholder = "SELECT * FROM ..."
+	ti.CharLimit = 0
+	ti.SetWidth(0)
+	return ti
+}
+
 func newModel(db *sql.DB) tea.Model {
 	m := &mainModel{
 		state:          listView,
@@ -107,6 +121,7 @@ func newModel(db *sql.DB) tea.Model {
 		table:          newEmptyTable(),
 		viewport:       newEmptyViewport(),
 		detailViewport: newEmptyViewport(), // Initialize detail viewport
+		textInput:      newQueryInput(),
 		help:           help.New(),
 		spinner:        spinner.New(),
 		keys:           defaultKeys,
@@ -125,6 +140,7 @@ func newModelWithQuery(db *sql.DB, query string) tea.Model {
 		table:          newEmptyTable(),
 		viewport:       newEmptyViewport(),
 		detailViewport: newEmptyViewport(), // Initialize detail viewport
+		textInput:      newQueryInput(),
 		help:           help.New(),
 		spinner:        spinner.New(),
 		keys:           defaultKeys,
@@ -193,6 +209,8 @@ func (m *mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detailViewport.SetWidth(msg.Width)
 		m.detailViewport.SetHeight(vpHeight)
 
+		m.textInput.SetWidth(msg.Width)
+
 		tableHeight := msg.Height - 7
 		if tableHeight < 1 {
 			tableHeight = 1
@@ -217,7 +235,11 @@ func (m *mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		if key.Matches(msg, m.keys.Quit) {
-			return m, tea.Quit
+			// In table and query-edit views, 'q' is repurposed to edit the query,
+			// unless we're showing an error where 'q' should always quit.
+			if !(key.Matches(msg, m.keys.EditQuery) && m.errorMsg == "" && (m.state == tableView || m.state == queryEditView)) {
+				return m, tea.Quit
+			}
 		}
 		if m.errorMsg != "" {
 			if key.Matches(msg, m.keys.Back) {
@@ -239,6 +261,8 @@ func (m *mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateTableView(msg)
 	case detailView:
 		return m.updateDetailView(msg) // Route to new view
+	case queryEditView:
+		return m.updateQueryEditView(msg)
 	}
 
 	return m, cmd
@@ -257,6 +281,8 @@ func (m *mainModel) View() tea.View {
 			content = m.tableView()
 		case detailView:
 			content = m.detailView()
+		case queryEditView:
+			content = m.queryEditView()
 		}
 	}
 

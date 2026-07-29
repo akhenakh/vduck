@@ -74,9 +74,12 @@ vduck -h data-stage.example.com:443 -init "SET threads TO 4;"
 | `enter`      | Select / open row detail        |
 | `n` / `p`    | Next / previous row in detail   |
 | `c`          | Copy row (OSC 52)               |
-| `esc`        | Back                            |
+| `s`          | Copy schema (OSC 52)            |
+| `q`          | Edit query (from table view)    |
+| `esc`        | Back (or quit when no previous view) |
 | `?`          | Help                            |
-| `q` / `^c`   | Quit                            |
+| `q` / `^c`   | Quit (list / detail views)      |
+| `^c`         | Quit (table / edit views)       |
 
 ## License
 
