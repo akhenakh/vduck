@@ -10,13 +10,17 @@ builds:
     binary: vduck
     env:
       - CGO_ENABLED=1
-    goos: [linux, darwin, windows]
-    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
     ignore:
       - goos: darwin
         goarch: amd64
-      - goos: windows
-        goarch: arm64
     overrides:
       - goos: linux
         goarch: arm64
@@ -28,30 +32,17 @@ builds:
         env:
           - CC=oa64-clang
           - CXX=oa64-clang++
-      - goos: windows
-        goarch: amd64
-        env:
-          - CC=x86_64-w64-mingw32-gcc
-          - CXX=x86_64-w64-mingw32-g++
 
 archives:
   - id: default
     ids:
-      - nacbor
-      - nacborui
+      - vduck
     formats: ['tar.gz']
-    # Ship both binaries in a single tar.gz per platform.
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
-      {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
-      {{- if .Arm }}v{{ .Arm }}{{ end }}
-    # use zip for windows archives
-    format_overrides:
-      - goos: windows
-        formats: ['zip']
 
 changelog:
   sort: asc
