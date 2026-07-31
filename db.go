@@ -41,6 +41,57 @@ func stringifyValue(v interface{}, colName string) string {
 	}
 }
 
+// rewriteJSONColumns inspects the result metadata of an already-executed query
+// and, if any column is of type JSON, returns a rewritten query that casts those
+// columns to VARCHAR. DuckDB then returns the raw JSON text instead of parsed
+// Go maps/slices. The original query is returned unchanged when there is nothing
+// to rewrite (or the metadata cannot be read).
+func rewriteJSONColumns(query string, sqlRows *sql.Rows) (string, error) {
+	cts, err := sqlRows.ColumnTypes()
+	if err != nil {
+		return query, err
+	}
+
+	jsonIdx := make([]bool, len(cts))
+	hasJSON := false
+	for i, ct := range cts {
+		if strings.EqualFold(ct.DatabaseTypeName(), "JSON") {
+			jsonIdx[i] = true
+			hasJSON = true
+		}
+	}
+	if !hasJSON {
+		return query, nil
+	}
+
+	names := make([]string, len(cts))
+	for i, ct := range cts {
+		names[i] = ct.Name()
+	}
+
+	var b strings.Builder
+	b.WriteString("SELECT ")
+	for i, name := range names {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		ident := quoteIdent(name)
+		if jsonIdx[i] {
+			b.WriteString("CAST(" + ident + " AS VARCHAR) AS " + ident)
+		} else {
+			b.WriteString(ident)
+		}
+	}
+	inner := strings.TrimSuffix(strings.TrimSpace(query), ";")
+	b.WriteString(" FROM (" + inner + ") AS vduck_sub")
+	return b.String(), nil
+}
+
+// quoteIdent quotes a column name as a DuckDB double-quoted identifier.
+func quoteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
 // isWKBColumn reports whether a column name hints that its values are WKB.
 func isWKBColumn(name string) bool {
 	switch strings.ToLower(name) {
@@ -190,6 +241,26 @@ func fetchTableData(db *sql.DB, query string) ([]table.Column, []table.Row, erro
 	sqlRows, err := db.Query(query)
 	if err != nil {
 		return nil, nil, err
+	}
+
+	// The go-duckdb driver hands back JSON columns as parsed Go maps/slices,
+	// which would render as e.g. "map[a:1 ...]". Detect them from the result
+	// metadata and rewrite the query so DuckDB serializes them back to JSON text.
+	rewritten, err := rewriteJSONColumns(query, sqlRows)
+	if err != nil {
+		sqlRows.Close()
+		return nil, nil, err
+	}
+	if rewritten != query {
+		sqlRows.Close()
+		sqlRows, err = db.Query(rewritten)
+		if err != nil {
+			// Fall back to the original query if the rewrite is unsupported.
+			sqlRows, err = db.Query(query)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
 	}
 	defer sqlRows.Close()
 
