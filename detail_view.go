@@ -41,6 +41,12 @@ func (m *mainModel) updateDetailView(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
+	case fetchedDataMsg:
+		// A geo format toggle triggered a refetch while in the detail view.
+		m.setupTableView(msg.cols, msg.rows)
+		m.loading = false
+		m.refreshDetailView()
+		return m, nil
 	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, m.keys.Back):
@@ -50,6 +56,11 @@ func (m *mainModel) updateDetailView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Set the status message and trigger the OSC 52 clipboard command
 			m.statusMsg = "Row copied to clipboard!"
 			return m, tea.SetClipboard(m.selectedRowTxt)
+		case key.Matches(msg, m.keys.GeoJSON):
+			m.geoAsJSON = !m.geoAsJSON
+			m.loading = true
+			m.statusMsg = fmt.Sprintf("Geometry: %s", geoFormatLabel(m.geoAsJSON))
+			return m, tea.Batch(setLoading(true), m.fetchData)
 		case key.Matches(msg, m.keys.Schema):
 			schema, err := fetchTableSchema(m.db, m.query)
 			if err != nil {
@@ -101,6 +112,7 @@ func (d detailHelp) ShortHelp() []key.Binding {
 		d.m.keys.Prev,
 		d.m.keys.Copy,
 		d.m.keys.Schema,
+		d.m.keys.GeoJSON,
 		d.m.keys.Back,
 		d.m.keys.Help,
 		d.m.keys.Quit,
@@ -110,7 +122,7 @@ func (d detailHelp) ShortHelp() []key.Binding {
 func (d detailHelp) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{d.m.keys.Next, d.m.keys.Prev},
-		{d.m.keys.Copy, d.m.keys.Schema, d.m.keys.Back},
+		{d.m.keys.Copy, d.m.keys.Schema, d.m.keys.GeoJSON, d.m.keys.Back},
 		{d.m.keys.Help, d.m.keys.Quit},
 	}
 }

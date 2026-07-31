@@ -29,6 +29,7 @@ type keyMap struct {
 	Select    key.Binding
 	Schema    key.Binding // Describe current table and copy schema to clipboard
 	EditQuery key.Binding // Edit the current query
+	GeoJSON   key.Binding // Toggle geo display as JSON text
 	Back      key.Binding
 	Help      key.Binding
 	Right     key.Binding
@@ -43,6 +44,7 @@ var defaultKeys = keyMap{
 	Select:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "select")),
 	Schema:    key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "copy schema")),
 	EditQuery: key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "edit query")),
+	GeoJSON:   key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "switch geo format")),
 	Back:      key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
 	Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	Right:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "scroll right")),
@@ -70,6 +72,7 @@ type mainModel struct {
 	statusMsg      string // For "Copied to clipboard!" messages
 	selectedRowTxt string // Holds the raw text to be copied
 	isCustomQuery  bool
+	geoAsJSON      bool // Display geometry columns as GeoJSON text
 	loading        bool // True while fetching data/tables
 	initCmd        tea.Cmd
 }
@@ -125,6 +128,7 @@ func newModel(db *sql.DB) tea.Model {
 		help:           help.New(),
 		spinner:        spinner.New(),
 		keys:           defaultKeys,
+		geoAsJSON:      true,
 	}
 	m.spinner.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
 	m.spinner.Spinner = spinner.Dot
@@ -146,6 +150,7 @@ func newModelWithQuery(db *sql.DB, query string) tea.Model {
 		keys:           defaultKeys,
 		query:          query,
 		isCustomQuery:  true,
+		geoAsJSON:      true,
 		loading:        true,
 	}
 	m.spinner.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
@@ -163,7 +168,7 @@ func (m *mainModel) loadTables() tea.Msg {
 }
 
 func (m *mainModel) fetchData() tea.Msg {
-	cols, rows, err := fetchTableData(m.db, m.query)
+	cols, rows, err := fetchTableData(m.db, m.query, m.geoAsJSON)
 	if err != nil {
 		return errorMsg(err.Error())
 	}

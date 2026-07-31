@@ -85,6 +85,11 @@ func (m *mainModel) updateTableView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.EditQuery):
 			m.state = queryEditView
 			return m, m.setupQueryEditView()
+		case key.Matches(msg, m.keys.GeoJSON):
+			m.geoAsJSON = !m.geoAsJSON
+			m.loading = true
+			m.statusMsg = fmt.Sprintf("Geometry: %s", geoFormatLabel(m.geoAsJSON))
+			return m, tea.Batch(setLoading(true), m.fetchData)
 		}
 	}
 
@@ -109,7 +114,15 @@ func (m *mainModel) tableView() string {
 	return b.String()
 }
 
-func (m mainModel) ShortHelp() []key.Binding {
+// geoFormatLabel returns a short label for the current geometry display format.
+func geoFormatLabel(asJSON bool) string {
+	if asJSON {
+		return "GeoJSON text"
+	}
+	return "WKT"
+}
+
+func (m *mainModel) ShortHelp() []key.Binding {
 	// In table view, 'q' edits the query, so show ctrl+c as quit instead.
 	quitHelp := key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit"))
 	// esc goes back to the list view, or quits when started with --query.
@@ -118,7 +131,7 @@ func (m mainModel) ShortHelp() []key.Binding {
 		backDesc = "quit"
 	}
 	escHelp := key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", backDesc))
-	return []key.Binding{m.keys.Select, m.keys.Left, m.keys.Right, m.keys.Schema, m.keys.EditQuery, escHelp, m.keys.Help, quitHelp}
+	return []key.Binding{m.keys.Select, m.keys.Left, m.keys.Right, m.keys.Schema, m.keys.EditQuery, m.keys.GeoJSON, escHelp, m.keys.Help, quitHelp}
 }
 
 func (m mainModel) FullHelp() [][]key.Binding {
@@ -130,6 +143,6 @@ func (m mainModel) FullHelp() [][]key.Binding {
 	escHelp := key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", backDesc))
 	return [][]key.Binding{
 		{m.table.KeyMap.LineUp, m.table.KeyMap.LineDown, m.keys.Left, m.keys.Right},
-		{m.keys.Select, m.keys.Schema, m.keys.EditQuery, escHelp, quitHelp, m.keys.Help},
+		{m.keys.Select, m.keys.Schema, m.keys.EditQuery, m.keys.GeoJSON, escHelp, quitHelp, m.keys.Help},
 	}
 }

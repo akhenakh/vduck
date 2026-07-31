@@ -6,32 +6,23 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/table"
-	"github.com/peterstace/simplefeatures/geom"
 )
 
 // stringifyValue converts a scanned driver value into a display string.
 // DuckDB may return composite types (lists, structs, maps) as Go slices/maps
-// that cannot be stored in sql.RawBytes, so we use interface{} containers
-// and format the values here.
-//
-// For binary columns whose name suggests they contain WKB (geo, geom, geometry,
-// wkb), we attempt to decode the bytes as Well Known Binary and render the
-// resulting geometry as WKT.
-func stringifyValue(v interface{}, colName string) string {
+// that cannot be stored in sql.RawBytes, so we use interface{} containers and
+// format the values here. JSON and geometry columns are pre-converted to text
+// by the query rewrite in fetchTableData, so they arrive as plain strings.
+func stringifyValue(v interface{}) string {
 	switch val := v.(type) {
 	case nil:
 		return "NULL"
 	case []byte:
-		if isWKBColumn(colName) {
-			if g, err := geom.UnmarshalWKB(val); err == nil {
-				return g.AsText()
-			}
-		}
 		return string(val)
 	case []interface{}:
 		parts := make([]string, len(val))
 		for i, p := range val {
-			parts[i] = stringifyValue(p, "")
+			parts[i] = stringifyValue(p)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 	case fmt.Stringer:
@@ -41,27 +32,50 @@ func stringifyValue(v interface{}, colName string) string {
 	}
 }
 
-// rewriteJSONColumns inspects the result metadata of an already-executed query
-// and, if any column is of type JSON, returns a rewritten query that casts those
-// columns to VARCHAR. DuckDB then returns the raw JSON text instead of parsed
-// Go maps/slices. The original query is returned unchanged when there is nothing
-// to rewrite (or the metadata cannot be read).
-func rewriteJSONColumns(query string, sqlRows *sql.Rows) (string, error) {
+// rewriteColumns inspects the result metadata of an already-executed query and,
+// if any column needs interpretation, returns a rewritten query that produces
+// plain text values for it:
+//
+//   - JSON columns are cast to VARCHAR so DuckDB returns the raw JSON text
+//     instead of parsed Go maps/slices.
+//   - Geometry columns (DuckDB type GEOMETRY) are rendered via the spatial
+//     extension. When geoAsJSON is true they are converted to GeoJSON text,
+//     otherwise to WKT.
+//   - Columns whose name hints at geometry but hold raw WKB (BLOB) or WKT
+//     (VARCHAR) data are parsed with ST_GeomFromWKB / ST_GeomFromText first.
+//
+// The returned bool reports whether the rewritten query requires the spatial
+// extension to be loaded. The original query is returned unchanged when there
+// is nothing to rewrite (or the metadata cannot be read).
+func rewriteColumns(query string, sqlRows *sql.Rows, geoAsJSON bool) (string, bool, error) {
 	cts, err := sqlRows.ColumnTypes()
 	if err != nil {
-		return query, err
+		return query, false, err
 	}
 
 	jsonIdx := make([]bool, len(cts))
-	hasJSON := false
+	geoIdx := make([]bool, len(cts))
+	needsSpatial := false
+	hasRewrite := false
 	for i, ct := range cts {
-		if strings.EqualFold(ct.DatabaseTypeName(), "JSON") {
+		typ := strings.ToUpper(ct.DatabaseTypeName())
+		name := ct.Name()
+		switch {
+		case typ == "JSON":
 			jsonIdx[i] = true
-			hasJSON = true
+			hasRewrite = true
+		case typ == "GEOMETRY":
+			geoIdx[i] = true
+			needsSpatial = true
+			hasRewrite = true
+		case (typ == "BLOB" || typ == "VARCHAR") && isWKBColumn(name):
+			geoIdx[i] = true
+			needsSpatial = true
+			hasRewrite = true
 		}
 	}
-	if !hasJSON {
-		return query, nil
+	if !hasRewrite {
+		return query, false, nil
 	}
 
 	names := make([]string, len(cts))
@@ -76,15 +90,41 @@ func rewriteJSONColumns(query string, sqlRows *sql.Rows) (string, error) {
 			b.WriteString(", ")
 		}
 		ident := quoteIdent(name)
-		if jsonIdx[i] {
+		switch {
+		case jsonIdx[i]:
 			b.WriteString("CAST(" + ident + " AS VARCHAR) AS " + ident)
-		} else {
+		case geoIdx[i]:
+			// Try WKB first, then WKT, for BLOB/VARCHAR columns; GEOMETRY
+			// columns are passed straight to the formatting function.
+			geomExpr := ""
+			switch strings.ToUpper(cts[i].DatabaseTypeName()) {
+			case "BLOB":
+				geomExpr = "ST_GeomFromWKB(" + ident + ")"
+			case "VARCHAR":
+				geomExpr = "ST_GeomFromText(" + ident + ")"
+			default:
+				geomExpr = ident
+			}
+			if geoAsJSON {
+				b.WriteString("CAST(ST_AsGeoJSON(" + geomExpr + ") AS VARCHAR) AS " + ident)
+			} else {
+				b.WriteString("ST_AsText(" + geomExpr + ") AS " + ident)
+			}
+		default:
 			b.WriteString(ident)
 		}
 	}
 	inner := strings.TrimSuffix(strings.TrimSpace(query), ";")
 	b.WriteString(" FROM (" + inner + ") AS vduck_sub")
-	return b.String(), nil
+	return b.String(), needsSpatial, nil
+}
+
+// ensureSpatialLoaded makes the spatial extension available for geometry
+// rewriting. It is best-effort: if the extension cannot be installed/loaded the
+// caller falls back to the original query.
+func ensureSpatialLoaded(db *sql.DB) {
+	db.Exec("INSTALL spatial")
+	db.Exec("LOAD spatial")
 }
 
 // quoteIdent quotes a column name as a DuckDB double-quoted identifier.
@@ -92,10 +132,11 @@ func quoteIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
-// isWKBColumn reports whether a column name hints that its values are WKB.
+// isWKBColumn reports whether a column name hints that its values are geometry
+// data encoded as WKB or WKT.
 func isWKBColumn(name string) bool {
 	switch strings.ToLower(name) {
-	case "geo", "geom", "geometry", "wkb":
+	case "geo", "geom", "geometry", "wkb", "wkt":
 		return true
 	default:
 		return false
@@ -188,7 +229,7 @@ func fetchTableSchema(db *sql.DB, source string) (string, error) {
 		}
 		row := make(table.Row, len(colNames))
 		for i := range colNames {
-			row[i] = stringifyValue(*vals[i].(*interface{}), colNames[i])
+			row[i] = stringifyValue(*vals[i].(*interface{}))
 		}
 		records = append(records, row)
 	}
@@ -237,22 +278,28 @@ func fetchTableSchema(db *sql.DB, source string) (string, error) {
 }
 
 // fetchTableData executes a query and returns the columns and rows for our table model.
-func fetchTableData(db *sql.DB, query string) ([]table.Column, []table.Row, error) {
+// The geoAsJSON flag controls how geometry columns are rendered (GeoJSON text
+// when true, WKT otherwise).
+func fetchTableData(db *sql.DB, query string, geoAsJSON bool) ([]table.Column, []table.Row, error) {
 	sqlRows, err := db.Query(query)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// The go-duckdb driver hands back JSON columns as parsed Go maps/slices,
-	// which would render as e.g. "map[a:1 ...]". Detect them from the result
-	// metadata and rewrite the query so DuckDB serializes them back to JSON text.
-	rewritten, err := rewriteJSONColumns(query, sqlRows)
+	// The go-duckdb driver hands back JSON columns as parsed Go maps/slices
+	// (rendered as e.g. "map[a:1 ...]") and geometry columns as raw WKB bytes.
+	// Detect them from the result metadata and rewrite the query so DuckDB
+	// serializes them back to text.
+	rewritten, needsSpatial, err := rewriteColumns(query, sqlRows, geoAsJSON)
 	if err != nil {
 		sqlRows.Close()
 		return nil, nil, err
 	}
 	if rewritten != query {
 		sqlRows.Close()
+		if needsSpatial {
+			ensureSpatialLoaded(db)
+		}
 		sqlRows, err = db.Query(rewritten)
 		if err != nil {
 			// Fall back to the original query if the rewrite is unsupported.
@@ -288,7 +335,7 @@ func fetchTableData(db *sql.DB, query string) ([]table.Column, []table.Row, erro
 
 		row := make(table.Row, len(colNames))
 		for i := range colNames {
-			row[i] = stringifyValue(*vals[i].(*interface{}), colNames[i])
+			row[i] = stringifyValue(*vals[i].(*interface{}))
 		}
 		rows = append(rows, row)
 	}
