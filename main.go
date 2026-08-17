@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	_ "github.com/duckdb/duckdb-go/v2"
@@ -18,6 +19,7 @@ func main() {
 	dbPath := fs.String("db", ":memory:", "Path to the DuckDB database file")
 	initSQL := fs.String("init", "", "Initialization SQL to run on startup")
 	queryStr := fs.String("query", "", "Directly execute a query and show the results")
+	timeoutStr := fs.Duration("timeout", 60*time.Second, "Timeout for running each query (e.g. 30s, 2m)")
 
 	// New Quack flags
 	host := fs.String("h", "", "Quack hostname (e.g., data-stage.tech.dronespotterlabs.com:443)")
@@ -89,9 +91,9 @@ func main() {
 	var initialModel tea.Model
 
 	if finalQuery != "" {
-		initialModel = newModelWithQuery(db, finalQuery)
+		initialModel = newModelWithQuery(db, finalQuery, *timeoutStr)
 	} else {
-		initialModel = newModel(db)
+		initialModel = newModel(db, *timeoutStr)
 	}
 
 	p := tea.NewProgram(initialModel)

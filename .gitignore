@@ -1,0 +1,20 @@
+# Go build output
+/vduck
+/dist/
+
+# Demo / asciinema recordings
+*.cast
+out.gif
+
+# Sample data files
+vdq.*
+
+# DuckDB databases and data files
+*.duckdb
+*.db
+*.db3
+*.parquet
+*.vortex
+*.geojson
+*.csv
+*.json

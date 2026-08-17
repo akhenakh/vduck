@@ -13,7 +13,7 @@ func (m *mainModel) updateQueryEditView(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch {
-		case key.Matches(msg, key.NewBinding(key.WithKeys("esc"))):
+		case key.Matches(msg, m.keys.Esc):
 			m.state = tableView
 			m.textInput.Blur()
 			return m, nil
@@ -29,7 +29,7 @@ func (m *mainModel) updateQueryEditView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = tableView
 			m.loading = true
 			m.textInput.Blur()
-			return m, tea.Batch(setLoading(true), m.fetchData)
+			return m, m.fetchData
 		}
 	}
 

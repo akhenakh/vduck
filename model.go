@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -31,6 +33,7 @@ type keyMap struct {
 	EditQuery key.Binding // Edit the current query
 	GeoJSON   key.Binding // Toggle geo display as JSON text
 	Back      key.Binding
+	Esc       key.Binding // Escape only (used where backspace has another meaning, e.g. the query editor)
 	Help      key.Binding
 	Right     key.Binding
 	Left      key.Binding
@@ -46,6 +49,7 @@ var defaultKeys = keyMap{
 	EditQuery: key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "edit query")),
 	GeoJSON:   key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "switch geo format")),
 	Back:      key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
+	Esc:       key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 	Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	Right:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "scroll right")),
 	Left:      key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "scroll left")),
@@ -74,6 +78,7 @@ type mainModel struct {
 	isCustomQuery  bool
 	geoAsJSON      bool // Display geometry columns as GeoJSON text
 	loading        bool // True while fetching data/tables
+	queryTimeout   time.Duration
 	initCmd        tea.Cmd
 }
 
@@ -116,7 +121,7 @@ func newQueryInput() textinput.Model {
 	return ti
 }
 
-func newModel(db *sql.DB) tea.Model {
+func newModel(db *sql.DB, queryTimeout time.Duration) tea.Model {
 	m := &mainModel{
 		state:          listView,
 		db:             db,
@@ -129,6 +134,7 @@ func newModel(db *sql.DB) tea.Model {
 		spinner:        spinner.New(),
 		keys:           defaultKeys,
 		geoAsJSON:      true,
+		queryTimeout:   queryTimeout,
 	}
 	m.spinner.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
 	m.spinner.Spinner = spinner.Dot
@@ -136,7 +142,7 @@ func newModel(db *sql.DB) tea.Model {
 	return m
 }
 
-func newModelWithQuery(db *sql.DB, query string) tea.Model {
+func newModelWithQuery(db *sql.DB, query string, queryTimeout time.Duration) tea.Model {
 	m := &mainModel{
 		state:          tableView,
 		db:             db,
@@ -152,6 +158,7 @@ func newModelWithQuery(db *sql.DB, query string) tea.Model {
 		isCustomQuery:  true,
 		geoAsJSON:      true,
 		loading:        true,
+		queryTimeout:   queryTimeout,
 	}
 	m.spinner.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
 	m.spinner.Spinner = spinner.Dot
@@ -159,8 +166,16 @@ func newModelWithQuery(db *sql.DB, query string) tea.Model {
 	return m
 }
 
+// queryCtx returns a context that bounds how long a single database operation
+// (table list, data fetch, describe) may run before being cancelled.
+func (m *mainModel) queryCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), m.queryTimeout)
+}
+
 func (m *mainModel) loadTables() tea.Msg {
-	tables, err := fetchTablesAndViews(m.db)
+	ctx, cancel := m.queryCtx()
+	defer cancel()
+	tables, err := fetchTablesAndViews(ctx, m.db)
 	if err != nil {
 		return errorMsg(err.Error())
 	}
@@ -168,20 +183,13 @@ func (m *mainModel) loadTables() tea.Msg {
 }
 
 func (m *mainModel) fetchData() tea.Msg {
-	cols, rows, err := fetchTableData(m.db, m.query, m.geoAsJSON)
+	ctx, cancel := m.queryCtx()
+	defer cancel()
+	cols, rows, err := fetchTableData(ctx, m.db, m.query, m.geoAsJSON)
 	if err != nil {
 		return errorMsg(err.Error())
 	}
 	return fetchedDataMsg{cols: cols, rows: rows}
-}
-
-// loadingMsg toggles the loading spinner on/off.
-type loadingMsg bool
-
-func setLoading(loading bool) tea.Cmd {
-	return func() tea.Msg {
-		return loadingMsg(loading)
-	}
 }
 
 func (m *mainModel) Init() tea.Cmd {
@@ -228,15 +236,6 @@ func (m *mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == detailView {
 			m.detailViewport.SetContent(baseStyle.Render(m.selectedRowTxt))
 		}
-
-	case loadingMsg:
-		m.loading = bool(msg)
-
-	case fetchedTablesMsg:
-		m.loading = false
-
-	case fetchedDataMsg:
-		m.loading = false
 
 	case tea.KeyPressMsg:
 		if key.Matches(msg, m.keys.Quit) {

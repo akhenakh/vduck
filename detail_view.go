@@ -60,9 +60,11 @@ func (m *mainModel) updateDetailView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.geoAsJSON = !m.geoAsJSON
 			m.loading = true
 			m.statusMsg = fmt.Sprintf("Geometry: %s", geoFormatLabel(m.geoAsJSON))
-			return m, tea.Batch(setLoading(true), m.fetchData)
+			return m, m.fetchData
 		case key.Matches(msg, m.keys.Schema):
-			schema, err := fetchTableSchema(m.db, m.query)
+			ctx, cancel := m.queryCtx()
+			schema, err := fetchTableSchema(ctx, m.db, m.query)
+			cancel()
 			if err != nil {
 				m.statusMsg = fmt.Sprintf("Describe failed: %s", err)
 				return m, nil

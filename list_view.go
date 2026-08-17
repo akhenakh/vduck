@@ -26,6 +26,7 @@ func (m *mainModel) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case fetchedTablesMsg:
 		m.setupListView(msg)
+		m.loading = false
 
 	case spinner.TickMsg:
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -50,7 +51,7 @@ func (m *mainModel) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.query = fmt.Sprintf("SELECT * FROM %s LIMIT 1000;", selected)
 				m.state = tableView
 				m.loading = true
-				return m, tea.Batch(setLoading(true), m.fetchData)
+				return m, m.fetchData
 			}
 
 		case key.Matches(msg, m.keys.Schema):
@@ -61,7 +62,9 @@ func (m *mainModel) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.list.NewStatusMessage("Cannot describe hidden tables directly. Use --query flag.")
 				}
 
-				schema, err := fetchTableSchema(m.db, selected)
+				ctx, cancel := m.queryCtx()
+				schema, err := fetchTableSchema(ctx, m.db, selected)
+				cancel()
 				if err != nil {
 					return m, m.list.NewStatusMessage(fmt.Sprintf("Describe failed: %s", err))
 				}
@@ -78,20 +81,10 @@ func (m *mainModel) updateListView(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *mainModel) listView() string {
-	if m.loading {
-		return fmt.Sprintf("\n  %s Loading %s...\n", m.spinner.View(), m.listLoadingLabel())
-	}
-	if len(m.list.Items()) == 0 {
+	if m.loading || len(m.list.Items()) == 0 {
 		return fmt.Sprintf("\n  %s Loading tables...\n", m.spinner.View())
 	}
 	return m.list.View()
-}
-
-func (m *mainModel) listLoadingLabel() string {
-	if m.state == tableView && m.query != "" {
-		return "query"
-	}
-	return "tables"
 }
 
 type listItem string

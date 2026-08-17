@@ -58,7 +58,7 @@ func (m *mainModel) updateTableView(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = detailView
 				return m, nil
 			}
-		case key.Matches(msg, key.NewBinding(key.WithKeys("esc"))):
+		case key.Matches(msg, m.keys.Esc):
 			if !m.isCustomQuery {
 				m.state = listView
 				m.query = ""
@@ -75,7 +75,9 @@ func (m *mainModel) updateTableView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.ScrollLeft(5)
 			return m, nil
 		case key.Matches(msg, m.keys.Schema):
-			schema, err := fetchTableSchema(m.db, m.query)
+			ctx, cancel := m.queryCtx()
+			schema, err := fetchTableSchema(ctx, m.db, m.query)
+			cancel()
 			if err != nil {
 				m.statusMsg = fmt.Sprintf("Describe failed: %s", err)
 				return m, nil
@@ -89,7 +91,7 @@ func (m *mainModel) updateTableView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.geoAsJSON = !m.geoAsJSON
 			m.loading = true
 			m.statusMsg = fmt.Sprintf("Geometry: %s", geoFormatLabel(m.geoAsJSON))
-			return m, tea.Batch(setLoading(true), m.fetchData)
+			return m, m.fetchData
 		}
 	}
 

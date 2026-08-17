@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -32,9 +33,58 @@ func stringifyValue(v interface{}) string {
 	}
 }
 
-// rewriteColumns inspects the result metadata of an already-executed query and,
-// if any column needs interpretation, returns a rewritten query that produces
-// plain text values for it:
+// resultColumnPair is the name and DuckDB type of a single result column, as
+// reported by DESCRIBE.
+type resultColumnPair struct {
+	name string
+	typ  string
+}
+
+// analyzeSchema returns the result column names and types of the given query by
+// asking DuckDB to describe it. Describing only plans the query and does not
+// scan any rows, so it is cheap even for large tables and avoids executing the
+// data query just to inspect its types. When the query cannot be described
+// (e.g. a non-SELECT statement) it returns an error and the caller falls back
+// to running the query without any rewriting.
+func analyzeSchema(ctx context.Context, db *sql.DB, query string) ([]resultColumnPair, error) {
+	inner := strings.TrimSuffix(strings.TrimSpace(query), ";")
+	rows, err := db.QueryContext(ctx, "DESCRIBE ("+inner+")")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []resultColumnPair
+	var name, typ, nul, key, def, extra interface{}
+	for rows.Next() {
+		if err := rows.Scan(&name, &typ, &nul, &key, &def, &extra); err != nil {
+			return nil, err
+		}
+		out = append(out, resultColumnPair{name: strval(name), typ: strval(typ)})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// strval best-effort converts a value scanned from a SQL column to a string
+// (NULL becomes "").
+func strval(v interface{}) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case []byte:
+		return string(x)
+	default:
+		return fmt.Sprintf("%v", x)
+	}
+}
+
+// buildRewrite inspects the result column types and, if any column needs
+// interpretation, returns a rewritten query that produces plain text for it:
 //
 //   - JSON columns are cast to VARCHAR so DuckDB returns the raw JSON text
 //     instead of parsed Go maps/slices.
@@ -46,20 +96,14 @@ func stringifyValue(v interface{}) string {
 //
 // The returned bool reports whether the rewritten query requires the spatial
 // extension to be loaded. The original query is returned unchanged when there
-// is nothing to rewrite (or the metadata cannot be read).
-func rewriteColumns(query string, sqlRows *sql.Rows, geoAsJSON bool) (string, bool, error) {
-	cts, err := sqlRows.ColumnTypes()
-	if err != nil {
-		return query, false, err
-	}
-
-	jsonIdx := make([]bool, len(cts))
-	geoIdx := make([]bool, len(cts))
+// is nothing to rewrite.
+func buildRewrite(query string, cols []resultColumnPair, geoAsJSON bool) (string, bool) {
+	jsonIdx := make([]bool, len(cols))
+	geoIdx := make([]bool, len(cols))
 	needsSpatial := false
 	hasRewrite := false
-	for i, ct := range cts {
-		typ := strings.ToUpper(ct.DatabaseTypeName())
-		name := ct.Name()
+	for i, c := range cols {
+		typ := strings.ToUpper(c.typ)
 		switch {
 		case typ == "JSON":
 			jsonIdx[i] = true
@@ -68,42 +112,35 @@ func rewriteColumns(query string, sqlRows *sql.Rows, geoAsJSON bool) (string, bo
 			geoIdx[i] = true
 			needsSpatial = true
 			hasRewrite = true
-		case (typ == "BLOB" || typ == "VARCHAR") && isWKBColumn(name):
+		case (typ == "BLOB" || typ == "VARCHAR") && isWKBColumn(c.name):
 			geoIdx[i] = true
 			needsSpatial = true
 			hasRewrite = true
 		}
 	}
 	if !hasRewrite {
-		return query, false, nil
-	}
-
-	names := make([]string, len(cts))
-	for i, ct := range cts {
-		names[i] = ct.Name()
+		return query, false
 	}
 
 	var b strings.Builder
 	b.WriteString("SELECT ")
-	for i, name := range names {
+	for i, c := range cols {
 		if i > 0 {
 			b.WriteString(", ")
 		}
-		ident := quoteIdent(name)
+		ident := quoteIdent(c.name)
 		switch {
 		case jsonIdx[i]:
 			b.WriteString("CAST(" + ident + " AS VARCHAR) AS " + ident)
 		case geoIdx[i]:
-			// Try WKB first, then WKT, for BLOB/VARCHAR columns; GEOMETRY
-			// columns are passed straight to the formatting function.
-			geomExpr := ""
-			switch strings.ToUpper(cts[i].DatabaseTypeName()) {
+			// GEOMETRY columns go straight to the formatting function;
+			// BLOB/VARCHAR columns are parsed from WKB/WKT first.
+			geomExpr := ident
+			switch strings.ToUpper(c.typ) {
 			case "BLOB":
 				geomExpr = "ST_GeomFromWKB(" + ident + ")"
 			case "VARCHAR":
 				geomExpr = "ST_GeomFromText(" + ident + ")"
-			default:
-				geomExpr = ident
 			}
 			if geoAsJSON {
 				b.WriteString("CAST(ST_AsGeoJSON(" + geomExpr + ") AS VARCHAR) AS " + ident)
@@ -116,15 +153,15 @@ func rewriteColumns(query string, sqlRows *sql.Rows, geoAsJSON bool) (string, bo
 	}
 	inner := strings.TrimSuffix(strings.TrimSpace(query), ";")
 	b.WriteString(" FROM (" + inner + ") AS vduck_sub")
-	return b.String(), needsSpatial, nil
+	return b.String(), needsSpatial
 }
 
 // ensureSpatialLoaded makes the spatial extension available for geometry
 // rewriting. It is best-effort: if the extension cannot be installed/loaded the
 // caller falls back to the original query.
-func ensureSpatialLoaded(db *sql.DB) {
-	db.Exec("INSTALL spatial")
-	db.Exec("LOAD spatial")
+func ensureSpatialLoaded(ctx context.Context, db *sql.DB) {
+	db.ExecContext(ctx, "INSTALL spatial")
+	db.ExecContext(ctx, "LOAD spatial")
 }
 
 // quoteIdent quotes a column name as a DuckDB double-quoted identifier.
@@ -133,21 +170,22 @@ func quoteIdent(name string) string {
 }
 
 // isWKBColumn reports whether a column name hints that its values are geometry
-// data encoded as WKB or WKT.
+// data encoded as WKB or WKT. It matches common PostGIS names (the_geom,
+// geom_2154, *_wkb, *_wkt) in addition to the bare names. A false positive is
+// safe: the geometry rewrite will fail and fall back to the original query.
 func isWKBColumn(name string) bool {
-	switch strings.ToLower(name) {
-	case "geo", "geom", "geometry", "wkb", "wkt":
+	n := strings.ToLower(name)
+	if n == "geo" {
 		return true
-	default:
-		return false
 	}
+	return strings.Contains(n, "geom") || strings.HasSuffix(n, "wkb") || strings.HasSuffix(n, "wkt")
 }
 
 // fetchTablesAndViews retrieves a list of all tables and views across all catalogs.
 // It uses information_schema.tables as the primary source, falling back to
 // duckdb_tables()/duckdb_views(), and adds a placeholder for attached catalogs
 // (e.g. Quack remote) that don't expose their metadata to client introspection.
-func fetchTablesAndViews(db *sql.DB) ([]string, error) {
+func fetchTablesAndViews(ctx context.Context, db *sql.DB) ([]string, error) {
 	query := `
 		WITH all_objects AS (
 			SELECT table_catalog AS database_name,
@@ -182,7 +220,7 @@ func fetchTablesAndViews(db *sql.DB) ([]string, error) {
 		SELECT database_name, schema_name, table_name FROM hidden
 		ORDER BY database_name, schema_name, table_name;
 	`
-	rows, err := db.Query(query)
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -203,10 +241,10 @@ func fetchTablesAndViews(db *sql.DB) ([]string, error) {
 
 // fetchTableSchema runs DESCRIBE on the given table/view and returns a formatted
 // string representation of its schema, suitable for copying to the clipboard.
-func fetchTableSchema(db *sql.DB, source string) (string, error) {
+func fetchTableSchema(ctx context.Context, db *sql.DB, source string) (string, error) {
 	source = strings.TrimSuffix(strings.TrimSpace(source), ";")
 	query := "DESCRIBE " + source + ";"
-	rows, err := db.Query(query)
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return "", err
 	}
@@ -277,36 +315,35 @@ func fetchTableSchema(db *sql.DB, source string) (string, error) {
 	return b.String(), nil
 }
 
-// fetchTableData executes a query and returns the columns and rows for our table model.
-// The geoAsJSON flag controls how geometry columns are rendered (GeoJSON text
-// when true, WKT otherwise).
-func fetchTableData(db *sql.DB, query string, geoAsJSON bool) ([]table.Column, []table.Row, error) {
-	sqlRows, err := db.Query(query)
-	if err != nil {
-		return nil, nil, err
+// fetchTableData executes a query and returns the columns and rows for the table
+// model. It asks DuckDB to describe the query first (no row scan), decides
+// whether JSON/geometry columns need a text rewrite, and then executes the data
+// query exactly once. The geoAsJSON flag controls how geometry columns are
+// rendered (GeoJSON text when true, WKT otherwise). The context bounds how long
+// the fetch may run.
+func fetchTableData(ctx context.Context, db *sql.DB, query string, geoAsJSON bool) ([]table.Column, []table.Row, error) {
+	// Inspect the result schema cheaply and build a rewrite if needed. If the
+	// query cannot be described, run it as-is with no rewrite.
+	finalQuery := query
+	if cols, err := analyzeSchema(ctx, db, query); err == nil {
+		rewritten, needsSpatial := buildRewrite(query, cols, geoAsJSON)
+		if needsSpatial {
+			ensureSpatialLoaded(ctx, db)
+		}
+		finalQuery = rewritten
 	}
 
-	// The go-duckdb driver hands back JSON columns as parsed Go maps/slices
-	// (rendered as e.g. "map[a:1 ...]") and geometry columns as raw WKB bytes.
-	// Detect them from the result metadata and rewrite the query so DuckDB
-	// serializes them back to text.
-	rewritten, needsSpatial, err := rewriteColumns(query, sqlRows, geoAsJSON)
+	sqlRows, err := db.QueryContext(ctx, finalQuery)
 	if err != nil {
-		sqlRows.Close()
-		return nil, nil, err
-	}
-	if rewritten != query {
-		sqlRows.Close()
-		if needsSpatial {
-			ensureSpatialLoaded(db)
-		}
-		sqlRows, err = db.Query(rewritten)
-		if err != nil {
-			// Fall back to the original query if the rewrite is unsupported.
-			sqlRows, err = db.Query(query)
+		// Fall back to the original query if the rewrite is unsupported
+		// (e.g. the spatial extension is unavailable).
+		if finalQuery != query {
+			sqlRows, err = db.QueryContext(ctx, query)
 			if err != nil {
 				return nil, nil, err
 			}
+		} else {
+			return nil, nil, err
 		}
 	}
 	defer sqlRows.Close()
@@ -328,11 +365,9 @@ func fetchTableData(db *sql.DB, query string, geoAsJSON bool) ([]table.Column, [
 
 	var rows []table.Row
 	for sqlRows.Next() {
-		err = sqlRows.Scan(vals...)
-		if err != nil {
+		if err := sqlRows.Scan(vals...); err != nil {
 			return nil, nil, err
 		}
-
 		row := make(table.Row, len(colNames))
 		for i := range colNames {
 			row[i] = stringifyValue(*vals[i].(*interface{}))
