@@ -43,7 +43,7 @@ func (m *mainModel) updateDetailView(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case fetchedDataMsg:
 		// A geo format toggle triggered a refetch while in the detail view.
-		m.setupTableView(msg.cols, msg.rows)
+		m.setupTableView(msg.cols, msg.rows, msg.geoCols)
 		m.loading = false
 		m.refreshDetailView()
 		return m, nil
@@ -61,6 +61,8 @@ func (m *mainModel) updateDetailView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			m.statusMsg = fmt.Sprintf("Geometry: %s", geoFormatLabel(m.geoAsJSON))
 			return m, m.fetchData
+		case key.Matches(msg, m.keys.Map):
+			return m.enterMapView()
 		case key.Matches(msg, m.keys.Schema):
 			ctx, cancel := m.queryCtx()
 			schema, err := fetchTableSchema(ctx, m.db, m.query)
@@ -109,22 +111,26 @@ type detailHelp struct {
 }
 
 func (d detailHelp) ShortHelp() []key.Binding {
-	return []key.Binding{
+	bindings := []key.Binding{
 		d.m.keys.Next,
 		d.m.keys.Prev,
 		d.m.keys.Copy,
 		d.m.keys.Schema,
 		d.m.keys.GeoJSON,
-		d.m.keys.Back,
-		d.m.keys.Help,
-		d.m.keys.Quit,
 	}
+	if len(d.m.geoCols) > 0 {
+		bindings = append(bindings, d.m.keys.Map)
+	}
+	return append(bindings, d.m.keys.Back, d.m.keys.Help, d.m.keys.Quit)
 }
 
 func (d detailHelp) FullHelp() [][]key.Binding {
+	row1 := []key.Binding{d.m.keys.Next, d.m.keys.Prev, d.m.keys.Copy, d.m.keys.Schema}
+	if len(d.m.geoCols) > 0 {
+		row1 = append(row1, d.m.keys.Map)
+	}
 	return [][]key.Binding{
-		{d.m.keys.Next, d.m.keys.Prev},
-		{d.m.keys.Copy, d.m.keys.Schema, d.m.keys.GeoJSON, d.m.keys.Back},
-		{d.m.keys.Help, d.m.keys.Quit},
+		row1,
+		{d.m.keys.GeoJSON, d.m.keys.Back, d.m.keys.Help, d.m.keys.Quit},
 	}
 }

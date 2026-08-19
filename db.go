@@ -108,7 +108,7 @@ func buildRewrite(query string, cols []resultColumnPair, geoAsJSON bool) (string
 		case typ == "JSON":
 			jsonIdx[i] = true
 			hasRewrite = true
-		case typ == "GEOMETRY":
+		case isGeometryType(typ):
 			geoIdx[i] = true
 			needsSpatial = true
 			hasRewrite = true
@@ -179,6 +179,47 @@ func isWKBColumn(name string) bool {
 		return true
 	}
 	return strings.Contains(n, "geom") || strings.HasSuffix(n, "wkb") || strings.HasSuffix(n, "wkt")
+}
+
+// isGeometryColumn reports whether a result column holds geometry data: a
+// DuckDB geometry type, or a BLOB/VARCHAR column whose name hints at WKB/WKT.
+func isGeometryColumn(c resultColumnPair) bool {
+	typ := strings.ToUpper(c.typ)
+	if isGeometryType(typ) {
+		return true
+	}
+	return (typ == "BLOB" || typ == "VARCHAR") && isWKBColumn(c.name)
+}
+
+// isGeometryType reports whether a DuckDB type string is a geometry type. It
+// matches GEOMETRY as well as the spatial extension's typed geometry columns
+// (POINT_2D, POLYGON, ...) and their CRS-qualified variants, e.g.
+// GEOMETRY('EPSG:4326') or GEOMETRY('OGC:CRS84').
+func isGeometryType(typ string) bool {
+	t := strings.ToUpper(strings.TrimSpace(typ))
+	if i := strings.IndexByte(t, '('); i >= 0 {
+		t = strings.TrimSpace(t[:i])
+	}
+	for _, dim := range []string{"_2D", "_3D", "_4D"} {
+		t = strings.TrimSuffix(t, dim)
+	}
+	switch t {
+	case "GEOMETRY", "POINT", "LINESTRING", "POLYGON",
+		"MULTIPOINT", "MULTILINESTRING", "MULTIPOLYGON", "GEOMETRYCOLLECTION":
+		return true
+	}
+	return false
+}
+
+// geometryColumns returns the indices of the geometry columns in a result set.
+func geometryColumns(cols []resultColumnPair) []int {
+	var idx []int
+	for i, c := range cols {
+		if isGeometryColumn(c) {
+			idx = append(idx, i)
+		}
+	}
+	return idx
 }
 
 // fetchTablesAndViews retrieves a list of all tables and views across all catalogs.
@@ -316,16 +357,18 @@ func fetchTableSchema(ctx context.Context, db *sql.DB, source string) (string, e
 }
 
 // fetchTableData executes a query and returns the columns and rows for the table
-// model. It asks DuckDB to describe the query first (no row scan), decides
-// whether JSON/geometry columns need a text rewrite, and then executes the data
-// query exactly once. The geoAsJSON flag controls how geometry columns are
-// rendered (GeoJSON text when true, WKT otherwise). The context bounds how long
-// the fetch may run.
-func fetchTableData(ctx context.Context, db *sql.DB, query string, geoAsJSON bool) ([]table.Column, []table.Row, error) {
+// model, plus the indices of any geometry columns in the result. It asks DuckDB
+// to describe the query first (no row scan), decides whether JSON/geometry
+// columns need a text rewrite, and then executes the data query exactly once.
+// The geoAsJSON flag controls how geometry columns are rendered (GeoJSON text
+// when true, WKT otherwise). The context bounds how long the fetch may run.
+func fetchTableData(ctx context.Context, db *sql.DB, query string, geoAsJSON bool) ([]table.Column, []table.Row, []int, error) {
 	// Inspect the result schema cheaply and build a rewrite if needed. If the
 	// query cannot be described, run it as-is with no rewrite.
 	finalQuery := query
+	var geoCols []int
 	if cols, err := analyzeSchema(ctx, db, query); err == nil {
+		geoCols = geometryColumns(cols)
 		rewritten, needsSpatial := buildRewrite(query, cols, geoAsJSON)
 		if needsSpatial {
 			ensureSpatialLoaded(ctx, db)
@@ -340,17 +383,17 @@ func fetchTableData(ctx context.Context, db *sql.DB, query string, geoAsJSON boo
 		if finalQuery != query {
 			sqlRows, err = db.QueryContext(ctx, query)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 		} else {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 	defer sqlRows.Close()
 
 	colNames, err := sqlRows.Columns()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	columns := make([]table.Column, len(colNames))
@@ -366,7 +409,7 @@ func fetchTableData(ctx context.Context, db *sql.DB, query string, geoAsJSON boo
 	var rows []table.Row
 	for sqlRows.Next() {
 		if err := sqlRows.Scan(vals...); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		row := make(table.Row, len(colNames))
 		for i := range colNames {
@@ -375,5 +418,5 @@ func fetchTableData(ctx context.Context, db *sql.DB, query string, geoAsJSON boo
 		rows = append(rows, row)
 	}
 
-	return columns, rows, nil
+	return columns, rows, geoCols, nil
 }

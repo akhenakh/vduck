@@ -7,8 +7,8 @@ import (
 
 func TestFileDataSourceInit(t *testing.T) {
 	tests := []struct {
-		name   string
-		path   string
+		name    string
+		path    string
 		wantSub string
 		wantNil bool
 	}{

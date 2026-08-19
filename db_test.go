@@ -31,7 +31,7 @@ func TestFetchTableDataJSONRenderedAsText(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cols, rows, err := fetchTableData(ctx, db, "SELECT * FROM t", true)
+	cols, rows, _, err := fetchTableData(ctx, db, "SELECT * FROM t", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestFetchTableDataCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel up-front: the fetch must respect the context.
 
-	if _, _, err := fetchTableData(ctx, db, "SELECT * FROM t", false); err == nil {
+	if _, _, _, err := fetchTableData(ctx, db, "SELECT * FROM t", false); err == nil {
 		t.Fatal("expected an error from a canceled context")
 	}
 }
@@ -68,7 +68,7 @@ func TestFetchTableDataTimeout(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	if _, _, err := fetchTableData(ctx, db, "SELECT sum(range) FROM range(1000000000)", false); err == nil {
+	if _, _, _, err := fetchTableData(ctx, db, "SELECT sum(range) FROM range(1000000000)", false); err == nil {
 		t.Fatal("expected a timeout error")
 	}
 	if time.Since(start) > 15*time.Second {
@@ -124,6 +124,14 @@ func TestBuildRewrite(t *testing.T) {
 		t.Fatalf("geometry: got %q spatial=%v, want %q true", got, spatial, wantGeo)
 	}
 
+	// CRS-qualified GEOMETRY column (as returned by ST_Read/read_parquet) must
+	// still be detected and rendered as WKT by default.
+	got, spatial = buildRewrite(q, []resultColumnPair{{"geom", "GEOMETRY('EPSG:4326')"}}, false)
+	wantCRS := `SELECT ST_AsText("geom") AS "geom" FROM (SELECT * FROM t) AS vduck_sub`
+	if got != wantCRS || !spatial {
+		t.Fatalf("geometry+crs: got %q spatial=%v, want %q true", got, spatial, wantCRS)
+	}
+
 	// BLOB column with a geometry-ish name parsed from WKB to WKT.
 	got, spatial = buildRewrite(q, []resultColumnPair{{"the_geom", "BLOB"}}, false)
 	wantWKB := `SELECT ST_AsText(ST_GeomFromWKB("the_geom")) AS "the_geom" FROM (SELECT * FROM t) AS vduck_sub`
@@ -169,6 +177,50 @@ func TestIsWKBColumn(t *testing.T) {
 	for _, n := range no {
 		if isWKBColumn(n) {
 			t.Errorf("isWKBColumn(%q) = true, want false", n)
+		}
+	}
+}
+
+func TestGeometryColumns(t *testing.T) {
+	cols := []resultColumnPair{
+		{"id", "INTEGER"},
+		{"geom", "GEOMETRY"},
+		{"name", "VARCHAR"},
+		{"the_geom", "BLOB"},
+		{"poly", "VARCHAR"},
+		{"shape", "DOUBLE"},
+		{"geocrs", "GEOMETRY('OGC:CRS84')"},
+		{"pt", "POINT_2D"},
+	}
+
+	got := geometryColumns(cols)
+	want := []int{1, 3, 6, 7}
+	if len(got) != len(want) {
+		t.Fatalf("geometryColumns = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("geometryColumns = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestIsGeometryType(t *testing.T) {
+	yes := []string{
+		"GEOMETRY", "geometry", "GEOMETRY('EPSG:4326')", "GEOMETRY('OGC:CRS84')",
+		"POINT", "POINT_2D", "LINESTRING_2D", "POLYGON_2D", "MULTIPOINT_2D",
+		"MULTILINESTRING_2D", "MULTIPOLYGON_2D", "GEOMETRYCOLLECTION", "POINT_3D",
+	}
+	no := []string{"BLOB", "VARCHAR", "JSON", "INTEGER", "DOUBLE", "POINTLESS"}
+
+	for _, n := range yes {
+		if !isGeometryType(n) {
+			t.Errorf("isGeometryType(%q) = false, want true", n)
+		}
+	}
+	for _, n := range no {
+		if isGeometryType(n) {
+			t.Errorf("isGeometryType(%q) = true, want false", n)
 		}
 	}
 }

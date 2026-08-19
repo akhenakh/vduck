@@ -10,6 +10,7 @@ vduck is a small Bubble Tea TUI that lets you browse tables/views, run queries, 
 - Open single-file data sources (Parquet, CSV, JSON, Vortex) as browsable views
 - Run custom queries
 - Auto-decode WKB geometry columns (`geo`, `geom`, `geometry`, `wkb`) to WKT
+- Map view (`m`) to render the selected row's geometry on a slippy map (requires a Kitty graphics terminal)
 - Vertical row detail view with `n`/`p` navigation between rows
 - OSC 52 clipboard copy of the selected row
 - One-step Quack server attachment via flags
@@ -75,6 +76,8 @@ vduck -h data-stage.example.com:443 -init "SET threads TO 4;"
 | `n` / `p`    | Next / previous row in detail   |
 | `c`          | Copy row (OSC 52)               |
 | `s`          | Copy schema (OSC 52)            |
+| `a`          | Toggle geometry display (GeoJSON text / WKT) |
+| `m`          | Show the selected row's geometry on a map (table/detail views, `esc` to close) |
 | `q`          | Edit query (from table view)    |
 | `esc`        | Back (or quit when no previous view) |
 | `?`          | Help                            |

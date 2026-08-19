@@ -13,7 +13,7 @@ import (
 
 var baseStyle = lipgloss.NewStyle().BorderStyle(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("240"))
 
-func (m *mainModel) setupTableView(cols []table.Column, rows []table.Row) {
+func (m *mainModel) setupTableView(cols []table.Column, rows []table.Row, geoCols []int) {
 	totalWidth := 0
 	for _, c := range cols {
 		totalWidth += c.Width + 3
@@ -27,6 +27,7 @@ func (m *mainModel) setupTableView(cols []table.Column, rows []table.Row) {
 	m.table.SetColumns(cols)
 	m.table.SetRows(rows)
 	m.table.SetWidth(totalWidth)
+	m.geoCols = geoCols
 
 	m.viewport.SetXOffset(0)
 	m.viewport.SetContent(baseStyle.Render(m.table.View()))
@@ -40,7 +41,7 @@ func (m *mainModel) updateTableView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		return m, nil
 	case fetchedDataMsg:
-		m.setupTableView(msg.cols, msg.rows)
+		m.setupTableView(msg.cols, msg.rows, msg.geoCols)
 		m.loading = false
 	case spinner.TickMsg:
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -92,6 +93,8 @@ func (m *mainModel) updateTableView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loading = true
 			m.statusMsg = fmt.Sprintf("Geometry: %s", geoFormatLabel(m.geoAsJSON))
 			return m, m.fetchData
+		case key.Matches(msg, m.keys.Map):
+			return m.enterMapView()
 		}
 	}
 
@@ -133,7 +136,11 @@ func (m *mainModel) ShortHelp() []key.Binding {
 		backDesc = "quit"
 	}
 	escHelp := key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", backDesc))
-	return []key.Binding{m.keys.Select, m.keys.Left, m.keys.Right, m.keys.Schema, m.keys.EditQuery, m.keys.GeoJSON, escHelp, m.keys.Help, quitHelp}
+	bindings := []key.Binding{m.keys.Select, m.keys.Left, m.keys.Right, m.keys.Schema, m.keys.EditQuery, m.keys.GeoJSON}
+	if len(m.geoCols) > 0 {
+		bindings = append(bindings, m.keys.Map)
+	}
+	return append(bindings, escHelp, m.keys.Help, quitHelp)
 }
 
 func (m mainModel) FullHelp() [][]key.Binding {
@@ -143,8 +150,13 @@ func (m mainModel) FullHelp() [][]key.Binding {
 		backDesc = "quit"
 	}
 	escHelp := key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", backDesc))
+	row2 := []key.Binding{m.keys.Select, m.keys.Schema, m.keys.EditQuery, m.keys.GeoJSON}
+	if len(m.geoCols) > 0 {
+		row2 = append(row2, m.keys.Map)
+	}
+	row2 = append(row2, escHelp, quitHelp, m.keys.Help)
 	return [][]key.Binding{
 		{m.table.KeyMap.LineUp, m.table.KeyMap.LineDown, m.keys.Left, m.keys.Right},
-		{m.keys.Select, m.keys.Schema, m.keys.EditQuery, m.keys.GeoJSON, escHelp, quitHelp, m.keys.Help},
+		row2,
 	}
 }

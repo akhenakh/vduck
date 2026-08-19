@@ -15,6 +15,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/akhenakh/tiletea"
 )
 
 type state int
@@ -24,6 +25,7 @@ const (
 	tableView
 	detailView    // Row details
 	queryEditView // Edit the current query
+	mapView       // Map display of the selected row's geometry
 )
 
 type keyMap struct {
@@ -32,6 +34,7 @@ type keyMap struct {
 	Schema    key.Binding // Describe current table and copy schema to clipboard
 	EditQuery key.Binding // Edit the current query
 	GeoJSON   key.Binding // Toggle geo display as JSON text
+	Map       key.Binding // Show the selected row's geometry on a map
 	Back      key.Binding
 	Esc       key.Binding // Escape only (used where backspace has another meaning, e.g. the query editor)
 	Help      key.Binding
@@ -48,6 +51,7 @@ var defaultKeys = keyMap{
 	Schema:    key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "copy schema")),
 	EditQuery: key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "edit query")),
 	GeoJSON:   key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "switch geo format")),
+	Map:       key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "map")),
 	Back:      key.NewBinding(key.WithKeys("esc", "backspace"), key.WithHelp("esc", "back")),
 	Esc:       key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 	Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
@@ -80,13 +84,19 @@ type mainModel struct {
 	loading        bool // True while fetching data/tables
 	queryTimeout   time.Duration
 	initCmd        tea.Cmd
+
+	geoCols    []int             // Indices of geometry columns in the current result
+	geomView   *tiletea.GeomView // Active map component (nil outside the map view)
+	mapLoading bool              // True while the map is being constructed
+	prevState  state             // Where to return when the map view is closed
 }
 
 type (
 	fetchedTablesMsg []string
 	fetchedDataMsg   struct {
-		cols []table.Column
-		rows []table.Row
+		cols    []table.Column
+		rows    []table.Row
+		geoCols []int
 	}
 	errorMsg string
 )
@@ -133,7 +143,7 @@ func newModel(db *sql.DB, queryTimeout time.Duration) tea.Model {
 		help:           help.New(),
 		spinner:        spinner.New(),
 		keys:           defaultKeys,
-		geoAsJSON:      true,
+		geoAsJSON:      false,
 		queryTimeout:   queryTimeout,
 	}
 	m.spinner.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("69"))
@@ -156,7 +166,7 @@ func newModelWithQuery(db *sql.DB, query string, queryTimeout time.Duration) tea
 		keys:           defaultKeys,
 		query:          query,
 		isCustomQuery:  true,
-		geoAsJSON:      true,
+		geoAsJSON:      false,
 		loading:        true,
 		queryTimeout:   queryTimeout,
 	}
@@ -185,11 +195,11 @@ func (m *mainModel) loadTables() tea.Msg {
 func (m *mainModel) fetchData() tea.Msg {
 	ctx, cancel := m.queryCtx()
 	defer cancel()
-	cols, rows, err := fetchTableData(ctx, m.db, m.query, m.geoAsJSON)
+	cols, rows, geoCols, err := fetchTableData(ctx, m.db, m.query, m.geoAsJSON)
 	if err != nil {
 		return errorMsg(err.Error())
 	}
-	return fetchedDataMsg{cols: cols, rows: rows}
+	return fetchedDataMsg{cols: cols, rows: rows, geoCols: geoCols}
 }
 
 func (m *mainModel) Init() tea.Cmd {
@@ -267,6 +277,8 @@ func (m *mainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateDetailView(msg) // Route to new view
 	case queryEditView:
 		return m.updateQueryEditView(msg)
+	case mapView:
+		return m.updateMapView(msg)
 	}
 
 	return m, cmd
@@ -287,6 +299,8 @@ func (m *mainModel) View() tea.View {
 			content = m.detailView()
 		case queryEditView:
 			content = m.queryEditView()
+		case mapView:
+			content = m.mapViewScreen()
 		}
 	}
 
