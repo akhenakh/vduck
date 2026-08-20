@@ -44,6 +44,28 @@ archives:
       {{- if eq .Arch "amd64" }}x86_64
       {{- else }}{{ .Arch }}{{ end }}
 
+homebrew_casks:
+  - name: vduck
+    binaries:
+      - vduck
+    homepage: https://github.com/akhenakh/vduck
+    description: A simple terminal UI for DuckDB
+    url:
+      verified: github.com/akhenakh/vduck
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/vduck"]
+          end
+    repository:
+      owner: akhenakh
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: Fabrice Aneche
+      email: akh@inair.space
+
 changelog:
   sort: asc
   filters:
