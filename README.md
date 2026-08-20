@@ -2,14 +2,14 @@
 
 A simple terminal UI for DuckDB, designed to work seamlessly with Quack remote servers.
 
-vduck is a small Bubble Tea TUI that lets you browse tables/views, run queries, and inspect rows from your terminal, just point it at a database (local or remote Quack server).
+vduck is a small Bubble Tea TUI that lets you browse tables/views, run queries, and inspect rows from your terminal, just point it at a database (local or remote Quack server), it also has features targeting GIS/Spatial users.
 
 ![avif](img/vduck.avif)
 
 ## Features
 
 - Browse tables and views across catalogs
-- Open single-file data sources (Parquet, CSV, JSON, Vortex) as browsable views
+- Open single-file data sources (Parquet, GeoParquet, CSV, JSON, Vortex) as browsable views
 - Run custom queries
 - Auto-decode WKB geometry columns (`geo`, `geom`, `geometry`, `wkb`) to WKT
 - Map view (`m`) to render the selected row's geometry on a slippy map (requires a Kitty graphics terminal)
