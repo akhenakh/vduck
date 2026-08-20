@@ -17,6 +17,15 @@ vduck is a small Bubble Tea TUI that lets you browse tables/views, run queries, 
 - OSC 52 clipboard copy of the selected row
 - One-step Quack server attachment via flags
 
+## Install
+
+### Homebrew
+
+```sh
+brew tap akhenakh/tap
+brew install vduck
+```
+
 ## Usage
 
 Local DuckDB file:
