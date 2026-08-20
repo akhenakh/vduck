@@ -4,6 +4,8 @@ A simple terminal UI for DuckDB, designed to work seamlessly with Quack remote s
 
 vduck is a small Bubble Tea TUI that lets you browse tables/views, run queries, and inspect rows from your terminal, just point it at a database (local or remote Quack server).
 
+![avif](img/vduck.avif)
+
 ## Features
 
 - Browse tables and views across catalogs
