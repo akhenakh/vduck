@@ -6,7 +6,7 @@ require (
 	charm.land/bubbles/v2 v2.1.1
 	charm.land/bubbletea/v2 v2.0.7
 	charm.land/lipgloss/v2 v2.0.5
-	github.com/akhenakh/tiletea v0.0.0-20260824131822-a7647bf13dfb
+	github.com/akhenakh/tiletea v0.0.0-20260824231246-2699bf541a2c
 	github.com/duckdb/duckdb-go/v2 v2.10505.0
 )
 
@@ -17,7 +17,7 @@ require (
 	github.com/BurntSushi/xgb v0.0.0-20210121224620-deaf085860bc // indirect
 	github.com/BurntSushi/xgbutil v0.0.0-20190907113008-ad855c713046 // indirect
 	github.com/ByteArena/poly2tri-go v0.0.0-20170716161910-d102ad91854f // indirect
-	github.com/akhenakh/maprender v0.0.0-20260823002747-3d03aa0dbab0 // indirect
+	github.com/akhenakh/maprender v0.0.0-20260824230925-ca8cfbf0bb25 // indirect
 	github.com/akhenakh/mvtgo v0.0.0-20260426004454-bc6e3d2e2fd2 // indirect
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/apache/arrow-go/v18 v18.5.1 // indirect
