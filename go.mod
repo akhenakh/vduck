@@ -6,7 +6,7 @@ require (
 	charm.land/bubbles/v2 v2.1.1
 	charm.land/bubbletea/v2 v2.0.7
 	charm.land/lipgloss/v2 v2.0.5
-	github.com/akhenakh/tiletea v0.0.0-20260823002920-86b13f57be8e
+	github.com/akhenakh/tiletea v0.0.0-20260824131822-a7647bf13dfb
 	github.com/duckdb/duckdb-go/v2 v2.10505.0
 )
 
