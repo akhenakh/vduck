@@ -7,7 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.7
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/akhenakh/tiletea v0.0.0-20260824231246-2699bf541a2c
-	github.com/duckdb/duckdb-go/v2 v2.10505.0
+	github.com/duckdb/duckdb-go/v2 v2.10506.0
 )
 
 require (
@@ -32,12 +32,12 @@ require (
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
-	github.com/duckdb/duckdb-go-bindings v0.10505.0 // indirect
-	github.com/duckdb/duckdb-go-bindings/lib/darwin-amd64 v0.10505.0 // indirect
-	github.com/duckdb/duckdb-go-bindings/lib/darwin-arm64 v0.10505.0 // indirect
-	github.com/duckdb/duckdb-go-bindings/lib/linux-amd64 v0.10505.0 // indirect
-	github.com/duckdb/duckdb-go-bindings/lib/linux-arm64 v0.10505.0 // indirect
-	github.com/duckdb/duckdb-go-bindings/lib/windows-amd64 v0.10505.0 // indirect
+	github.com/duckdb/duckdb-go-bindings v0.10506.0 // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/darwin-amd64 v0.10506.0 // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/darwin-arm64 v0.10506.0 // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/linux-amd64 v0.10506.0 // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/linux-arm64 v0.10506.0 // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/windows-amd64 v0.10506.0 // indirect
 	github.com/go-fonts/latin-modern v0.3.3 // indirect
 	github.com/go-text/typesetting v0.3.4 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
