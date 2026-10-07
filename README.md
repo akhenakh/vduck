@@ -26,6 +26,14 @@ brew tap akhenakh/tap
 brew install vduck
 ```
 
+### Arch Linux (AUR)
+
+`vduck` is available in the [AUR](https://aur.archlinux.org/packages/vduck):
+
+```sh
+paru -S vduck
+```
+
 ## Usage
 
 Local DuckDB file:
